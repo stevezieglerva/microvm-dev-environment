@@ -118,7 +118,7 @@ if [ "$SKIP_INFRA" = false ]; then
     EXISTING_GW_STATUS=$(aws bedrock-agentcore-control get-gateway --gateway-identifier "$GATEWAY_ID" \
       --query status --output text 2>/dev/null || echo "UNKNOWN")
     case "$EXISTING_GW_STATUS" in
-      FAILED|CREATE_FAILED|UPDATE_FAILED)
+      FAILED|CREATE_FAILED|UPDATE_FAILED|UPDATE_UNSUCCESSFUL)
         log "Removing failed AgentCore gateway '$GATEWAY_ID' before recreation..."
         aws bedrock-agentcore-control delete-gateway --gateway-identifier "$GATEWAY_ID" >/dev/null
         for i in $(seq 1 30); do
@@ -180,7 +180,7 @@ if [ "$SKIP_INFRA" = false ]; then
     TARGET_ID=$(echo "$TARGETS" | python3 -c "import sys,json; a=[x for x in json.load(sys.stdin).get('items',[]) if x.get('name')=='websearch']; print(a[0].get('targetId','') if a else '')")
     TARGET_STATUS=$(echo "$TARGETS" | python3 -c "import sys,json; a=[x for x in json.load(sys.stdin).get('items',[]) if x.get('name')=='websearch']; print(a[0].get('status','') if a else '')")
     case "$TARGET_STATUS" in
-      FAILED|CREATE_FAILED|UPDATE_FAILED)
+      FAILED|CREATE_FAILED|UPDATE_FAILED|UPDATE_UNSUCCESSFUL|SYNCHRONIZE_UNSUCCESSFUL)
         log "Removing failed AgentCore target '$TARGET_ID' before recreation..."
         aws bedrock-agentcore-control delete-gateway-target \
           --gateway-identifier "$GATEWAY_ID" --target-id "$TARGET_ID" >/dev/null
