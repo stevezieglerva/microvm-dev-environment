@@ -37,8 +37,14 @@ Parameters:
       Cosmetic — set your own once via `sam deploy --guided` or
       samconfig.toml's parameter_overrides; CloudFormation retains it on
       every later deploy.sh run without deploy.sh ever passing it.
+  CreatedDate:
+    Type: String
+    Default: "2026-09-20"
+    AllowedPattern: "\\d{4}-\\d{2}-\\d{2}"
+    Description: Immutable UTC date used for governance tags.
   MicrovmCodeUri:
     Type: String
+    Default: ""
     Description: >-
       s3://bucket/key of the zipped microvm/ source. deploy.sh computes this
       from a content hash of the zip on every deploy — CloudFormation only
@@ -58,28 +64,38 @@ Globals:
     Timeout: 30
     MemorySize: 256
 
+Conditions:
+  HasMicrovmCodeUri: !Not [!Equals [!Ref MicrovmCodeUri, ""]]
+
 Resources:
 
   # ── Networking ──────────────────────────────────────────────────────────────
   Vpc:
     Type: AWS::EC2::VPC
+    Condition: HasMicrovmCodeUri
     Properties:
       CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags: [{ Key: Name, Value: ipad-claude-vpc }]
+      Tags:
+        - { Key: Type, Value: rDev }
+        - { Key: Name, Value: Vpc }
+        - { Key: Created, Value: !Ref CreatedDate }
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
+    Condition: HasMicrovmCodeUri
 
   IgwAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
+    Condition: HasMicrovmCodeUri
     Properties:
       VpcId: !Ref Vpc
       InternetGatewayId: !Ref InternetGateway
 
   PublicSubnet1:
     Type: AWS::EC2::Subnet
+    Condition: HasMicrovmCodeUri
     Properties:
       VpcId: !Ref Vpc
       CidrBlock: 10.0.0.0/24
@@ -88,6 +104,7 @@ Resources:
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
+    Condition: HasMicrovmCodeUri
     Properties:
       VpcId: !Ref Vpc
       CidrBlock: 10.0.1.0/24
@@ -96,6 +113,7 @@ Resources:
 
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
+    Condition: HasMicrovmCodeUri
     Properties:
       VpcId: !Ref Vpc
       CidrBlock: 10.0.2.0/24
@@ -103,6 +121,7 @@ Resources:
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
+    Condition: HasMicrovmCodeUri
     Properties:
       VpcId: !Ref Vpc
       CidrBlock: 10.0.3.0/24
@@ -110,11 +129,13 @@ Resources:
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
+    Condition: HasMicrovmCodeUri
     Properties:
       VpcId: !Ref Vpc
 
   PublicRoute:
     Type: AWS::EC2::Route
+    Condition: HasMicrovmCodeUri
     DependsOn: IgwAttachment
     Properties:
       RouteTableId: !Ref PublicRouteTable
@@ -123,29 +144,35 @@ Resources:
 
   PublicSubnet1RouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: HasMicrovmCodeUri
     Properties: { RouteTableId: !Ref PublicRouteTable, SubnetId: !Ref PublicSubnet1 }
 
   PublicSubnet2RouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: HasMicrovmCodeUri
     Properties: { RouteTableId: !Ref PublicRouteTable, SubnetId: !Ref PublicSubnet2 }
 
   NatEip:
     Type: AWS::EC2::EIP
+    Condition: HasMicrovmCodeUri
     Properties: { Domain: vpc }
 
   NatGateway:
     Type: AWS::EC2::NatGateway
+    Condition: HasMicrovmCodeUri
     Properties:
       AllocationId: !GetAtt NatEip.AllocationId
       SubnetId: !Ref PublicSubnet1
 
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
+    Condition: HasMicrovmCodeUri
     Properties:
       VpcId: !Ref Vpc
 
   PrivateRoute:
     Type: AWS::EC2::Route
+    Condition: HasMicrovmCodeUri
     Properties:
       RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
@@ -153,15 +180,18 @@ Resources:
 
   PrivateSubnet1RouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: HasMicrovmCodeUri
     Properties: { RouteTableId: !Ref PrivateRouteTable, SubnetId: !Ref PrivateSubnet1 }
 
   PrivateSubnet2RouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: HasMicrovmCodeUri
     Properties: { RouteTableId: !Ref PrivateRouteTable, SubnetId: !Ref PrivateSubnet2 }
 
   # NFS (2049) within the VPC — S3 Files mount targets live behind this.
   NfsSecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    Condition: HasMicrovmCodeUri
     Properties:
       GroupDescription: Allow NFS traffic for S3 Files mount targets
       VpcId: !Ref Vpc
@@ -176,6 +206,7 @@ Resources:
   # Versioning is required by S3 Files. Retained so homes survive a stack delete.
   WorkspaceBucket:
     Type: AWS::S3::Bucket
+    Condition: HasMicrovmCodeUri
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -185,6 +216,10 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
       VersioningConfiguration: { Status: Enabled }
+      Tags:
+        - { Key: Type, Value: rDev }
+        - { Key: Name, Value: WorkspaceBucket }
+        - { Key: Created, Value: !Ref CreatedDate }
 
   ArtifactBucket:
     Type: AWS::S3::Bucket
@@ -197,20 +232,30 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
       VersioningConfiguration: { Status: Enabled }
+      Tags:
+        - { Key: Type, Value: rDev }
+        - { Key: Name, Value: ArtifactBucket }
+        - { Key: Created, Value: !Ref CreatedDate }
 
   FrontendBucket:
     Type: AWS::S3::Bucket
+    Condition: HasMicrovmCodeUri
     Properties:
       PublicAccessBlockConfiguration:
         { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      Tags:
+        - { Key: Type, Value: rDev }
+        - { Key: Name, Value: FrontendBucket }
+        - { Key: Created, Value: !Ref CreatedDate }
 
   # Role S3 Files assumes to sync the bucket + manage its change-detection rules.
   # Inline: this is a service-linked-style trust policy with no policy-template equivalent.
   S3FilesRole:
     Type: AWS::IAM::Role
+    Condition: HasMicrovmCodeUri
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -253,6 +298,7 @@ Resources:
   # S3 Files filesystem (NFS over the workspace bucket) + a mount target per AZ.
   S3FilesFileSystem:
     Type: AWS::S3Files::FileSystem
+    Condition: HasMicrovmCodeUri
     Properties:
       Bucket: !GetAtt WorkspaceBucket.Arn
       RoleArn: !GetAtt S3FilesRole.Arn
@@ -260,6 +306,7 @@ Resources:
 
   S3FilesMountTarget1:
     Type: AWS::S3Files::MountTarget
+    Condition: HasMicrovmCodeUri
     Properties:
       FileSystemId: !GetAtt S3FilesFileSystem.FileSystemId
       SubnetId: !Ref PrivateSubnet1
@@ -267,6 +314,7 @@ Resources:
 
   S3FilesMountTarget2:
     Type: AWS::S3Files::MountTarget
+    Condition: HasMicrovmCodeUri
     Properties:
       FileSystemId: !GetAtt S3FilesFileSystem.FileSystemId
       SubnetId: !Ref PrivateSubnet2
@@ -276,6 +324,7 @@ Resources:
   # Admin-created users only — no self-signup.
   UserPool:
     Type: AWS::Cognito::UserPool
+    Condition: HasMicrovmCodeUri
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -300,6 +349,7 @@ Resources:
 
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
+    Condition: HasMicrovmCodeUri
     Properties:
       UserPoolId: !Ref UserPool
       ClientName: ipad-claude-web
@@ -314,6 +364,7 @@ Resources:
   # AWS managed policy for basic Lambda logging, inline for the artifact read.
   MicroVmBuildRole:
     Type: AWS::IAM::Role
+    Condition: HasMicrovmCodeUri
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -369,6 +420,7 @@ Resources:
   # in bursts. Change this literal directly to move tiers.
   MicrovmImage:
     Type: AWS::Serverless::MicrovmImage
+    Condition: HasMicrovmCodeUri
     Properties:
       Name: remote-dev
       CodeUri: !Ref MicrovmCodeUri
@@ -431,18 +483,22 @@ Resources:
           - Sid: PassRole
             Effect: Allow
             Action: iam:PassRole
-            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/*"
+            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/ipad-claude/deployments/*"
+            Condition:
+              StringEquals:
+                iam:PassedToService: [cloudformation.amazonaws.com, lambda.amazonaws.com, apigateway.amazonaws.com, states.amazonaws.com, events.amazonaws.com, scheduler.amazonaws.com, ecs-tasks.amazonaws.com, codebuild.amazonaws.com]
           - Sid: BoundedRoleWrites
             Effect: Allow
             Action: [iam:CreateRole, iam:PutRolePolicy, iam:DeleteRolePolicy, iam:AttachRolePolicy, iam:DetachRolePolicy, iam:PutRolePermissionsBoundary]
-            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/*"
+            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/ipad-claude/deployments/*"
             Condition:
               StringEquals:
                 iam:PermissionsBoundary: !Sub "arn:aws:iam::${AWS::AccountId}:policy/ipad-claude-sandbox-boundary"
+                iam:Path: /ipad-claude/deployments/
           - Sid: RoleLifecycle
             Effect: Allow
-            Action: [iam:DeleteRole, iam:UpdateRole, iam:UpdateRoleDescription, iam:UpdateAssumeRolePolicy, iam:TagRole, iam:UntagRole, iam:CreateServiceLinkedRole]
-            Resource: "*"
+            Action: [iam:DeleteRole, iam:UpdateRole, iam:UpdateRoleDescription, iam:UpdateRoleDescription, iam:TagRole, iam:UntagRole]
+            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/ipad-claude/deployments/*"
           - Sid: ManagePolicies
             Effect: Allow
             Action: [iam:CreatePolicy, iam:DeletePolicy, iam:CreatePolicyVersion, iam:DeletePolicyVersion, iam:SetDefaultPolicyVersion, iam:TagPolicy, iam:UntagPolicy]
@@ -459,6 +515,14 @@ Resources:
             Effect: Deny
             Action: iam:DeleteRolePermissionsBoundary
             Resource: "*"
+          - Sid: DenyUsersAndKeys
+            Effect: Deny
+            Action: [iam:CreateUser, iam:CreateAccessKey, iam:CreateLoginProfile, iam:UpdateLoginProfile, iam:DeleteAccessKey, iam:DeleteUser]
+            Resource: "*"
+          - Sid: DenyServiceLinkedRoles
+            Effect: Deny
+            Action: iam:CreateServiceLinkedRole
+            Resource: "*"
           - Sid: DenyTouchSandboxInfra
             Effect: Deny
             Action: iam:*
@@ -471,6 +535,7 @@ Resources:
   # sandbox without granting open-ended IAM. See README SECURITY.
   MicroVmExecutionRole:
     Type: AWS::IAM::Role
+    Condition: HasMicrovmCodeUri
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -549,18 +614,22 @@ Resources:
               - Sid: PassRole
                 Effect: Allow
                 Action: iam:PassRole
-                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/*"
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/ipad-claude/deployments/*"
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: [cloudformation.amazonaws.com, lambda.amazonaws.com, apigateway.amazonaws.com, states.amazonaws.com, events.amazonaws.com, scheduler.amazonaws.com, ecs-tasks.amazonaws.com, codebuild.amazonaws.com]
               - Sid: BoundedRoleWrites
                 Effect: Allow
                 Action: [iam:CreateRole, iam:PutRolePolicy, iam:DeleteRolePolicy, iam:AttachRolePolicy, iam:DetachRolePolicy, iam:PutRolePermissionsBoundary]
-                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/*"
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/ipad-claude/deployments/*"
                 Condition:
                   StringEquals:
                     iam:PermissionsBoundary: !Ref SandboxPermissionsBoundary
+                    iam:Path: /ipad-claude/deployments/
               - Sid: RoleLifecycle
                 Effect: Allow
-                Action: [iam:DeleteRole, iam:UpdateRole, iam:UpdateRoleDescription, iam:UpdateAssumeRolePolicy, iam:TagRole, iam:UntagRole, iam:CreateServiceLinkedRole]
-                Resource: "*"
+                Action: [iam:DeleteRole, iam:UpdateRole, iam:UpdateRoleDescription, iam:TagRole, iam:UntagRole]
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/ipad-claude/deployments/*"
               - Sid: ManagePolicies
                 Effect: Allow
                 Action: [iam:CreatePolicy, iam:DeletePolicy, iam:CreatePolicyVersion, iam:DeletePolicyVersion, iam:SetDefaultPolicyVersion, iam:TagPolicy, iam:UntagPolicy]
@@ -577,6 +646,14 @@ Resources:
                 Effect: Deny
                 Action: iam:DeleteRolePermissionsBoundary
                 Resource: "*"
+              - Sid: DenyUsersAndKeys
+                Effect: Deny
+                Action: [iam:CreateUser, iam:CreateAccessKey, iam:CreateLoginProfile, iam:UpdateLoginProfile, iam:DeleteAccessKey, iam:DeleteUser]
+                Resource: "*"
+              - Sid: DenyServiceLinkedRoles
+                Effect: Deny
+                Action: iam:CreateServiceLinkedRole
+                Resource: "*"
               - Sid: DenyTouchSandboxInfra
                 Effect: Deny
                 Action: iam:*
@@ -585,6 +662,7 @@ Resources:
   # ── Compute: token-vending Lambda + API ──────────────────────────────────────
   TokenApi:
     Type: AWS::Serverless::Api
+    Condition: HasMicrovmCodeUri
     Properties:
       StageName: prod
       Cors:
@@ -602,8 +680,13 @@ Resources:
 
   TokenFunction:
     Type: AWS::Serverless::Function
+    Condition: HasMicrovmCodeUri
     Properties:
       FunctionName: ipad-claude-token-vend
+      Tags:
+        Type: rDev
+        Name: TokenFunction
+        Created: !Ref CreatedDate
       CodeUri: functions/token-vend/
       Handler: index.handler
       Environment:
@@ -625,8 +708,12 @@ Resources:
               Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ipad-claude/*"
             - Sid: PerUserAccessPoints
               Effect: Allow
-              Action: [s3files:CreateAccessPoint, s3files:GetAccessPoint, s3files:ListAccessPoints, s3files:DeleteAccessPoint]
+              Action: [s3files:CreateAccessPoint, s3files:GetAccessPoint, s3files:ListAccessPoints, s3files:DeleteAccessPoint, s3files:TagResource]
               Resource: "*"
+            - Sid: TagUserParameters
+              Effect: Allow
+              Action: ssm:AddTagsToResource
+              Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ipad-claude/*"
             - Sid: MicroVmLifecycle
               Effect: Allow
               Action: lambda:*
@@ -653,6 +740,7 @@ Resources:
   # ── Frontend: S3 + CloudFront ─────────────────────────────────────────────────
   FrontendOac:
     Type: AWS::CloudFront::OriginAccessControl
+    Condition: HasMicrovmCodeUri
     Properties:
       OriginAccessControlConfig:
         Name: !Sub "${AWS::StackName}-frontend-oac"
@@ -662,6 +750,7 @@ Resources:
 
   FrontendDistribution:
     Type: AWS::CloudFront::Distribution
+    Condition: HasMicrovmCodeUri
     Properties:
       DistributionConfig:
         Comment: Remote Developer (rDev) frontend
@@ -685,6 +774,7 @@ Resources:
   # Bucket policy: allow only this CloudFront distribution (via OAC) to read.
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    Condition: HasMicrovmCodeUri
     Properties:
       Bucket: !Ref FrontendBucket
       PolicyDocument:
@@ -701,6 +791,7 @@ Resources:
   # ── Egress: Lambda network connector (VPC egress for MicroVMs) ────────────────
   NetworkConnectorOperatorRole:
     Type: AWS::IAM::Role
+    Condition: HasMicrovmCodeUri
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -728,6 +819,7 @@ Resources:
 
   VpcEgressConnector:
     Type: AWS::Lambda::NetworkConnector
+    Condition: HasMicrovmCodeUri
     Properties:
       Name: ipad-claude-vpc-egress
       Configuration:
@@ -774,41 +866,55 @@ Resources:
 
 Outputs:
   TokenApiUrl:
+    Condition: HasMicrovmCodeUri
     Description: Token-vending API endpoint.
     Value: !Sub "https://${TokenApi}.execute-api.${AWS::Region}.amazonaws.com/prod/token"
   UserPoolId:
+    Condition: HasMicrovmCodeUri
     Value: !Ref UserPool
   UserPoolClientId:
+    Condition: HasMicrovmCodeUri
     Value: !Ref UserPoolClient
   LoginEmail:
+    Condition: HasMicrovmCodeUri
     Description: Configured via the LoginEmail parameter (samconfig.toml or --parameter-overrides).
     Value: !Ref LoginEmail
   CreateUserCommand:
+    Condition: HasMicrovmCodeUri
     Description: >-
       Run this once to create your first login. sam deploy prints this
       automatically — no need for deploy.sh to reconstruct it.
     Value: !Sub "aws cognito-idp admin-create-user --user-pool-id ${UserPool} --username ${LoginEmail} --user-attributes Name=email,Value=${LoginEmail} Name=email_verified,Value=true --temporary-password 'ChangeMe-123!'"
   FrontendUrl:
+    Condition: HasMicrovmCodeUri
     Value: !Sub "https://${FrontendDistribution.DomainName}"
   FrontendBucketName:
+    Condition: HasMicrovmCodeUri
     Value: !Ref FrontendBucket
   ArtifactBucketName:
     Value: !Ref ArtifactBucket
   WorkspaceBucketName:
+    Condition: HasMicrovmCodeUri
     Value: !Ref WorkspaceBucket
   CloudFrontDistributionId:
+    Condition: HasMicrovmCodeUri
     Value: !Ref FrontendDistribution
   BuildRoleArn:
+    Condition: HasMicrovmCodeUri
     Value: !GetAtt MicroVmBuildRole.Arn
   ExecutionRoleArn:
+    Condition: HasMicrovmCodeUri
     Value: !GetAtt MicroVmExecutionRole.Arn
   NetworkConnectorArn:
+    Condition: HasMicrovmCodeUri
     Value: !GetAtt VpcEgressConnector.Arn
   S3FilesFileSystemId:
+    Condition: HasMicrovmCodeUri
     Value: !GetAtt S3FilesFileSystem.FileSystemId
   WebSearchGatewayRoleArn:
     Description: IAM role used by the AgentCore web-search gateway (outbound connector auth).
     Value: !GetAtt WebSearchGatewayRole.Arn
   MicrovmImageArn:
+    Condition: HasMicrovmCodeUri
     Description: ARN of the MicroVM image (created/updated as part of this stack).
     Value: !GetAtt MicrovmImage.ImageArn

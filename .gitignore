@@ -3,6 +3,9 @@ node_modules/
 *.bak
 /tmp/
 
+# Sanitized deployment evidence is local-only.
+artifacts/install/
+
 # SAM build artifacts
 .aws-sam/
 

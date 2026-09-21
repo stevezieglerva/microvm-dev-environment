@@ -1,0 +1,44 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Account-wide cost guardrail for the rDev installation.
+
+Parameters:
+  CreatedDate:
+    Type: String
+    AllowedPattern: "\\d{4}-\\d{2}-\\d{2}"
+  AlertEmail:
+    Type: String
+    Default: stephen.v.ziegler@gmail.com
+
+Resources:
+  MonthlyCostBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: rdev-monthly-cost
+        BudgetLimit: { Amount: 10, Unit: USD }
+        TimeUnit: MONTHLY
+        BudgetType: COST
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 50, ThresholdType: PERCENTAGE }
+          Subscribers: [{ Address: !Ref AlertEmail, SubscriptionType: EMAIL }]
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE }
+          Subscribers: [{ Address: !Ref AlertEmail, SubscriptionType: EMAIL }]
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
+          Subscribers: [{ Address: !Ref AlertEmail, SubscriptionType: EMAIL }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 50, ThresholdType: PERCENTAGE }
+          Subscribers: [{ Address: !Ref AlertEmail, SubscriptionType: EMAIL }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE }
+          Subscribers: [{ Address: !Ref AlertEmail, SubscriptionType: EMAIL }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
+          Subscribers: [{ Address: !Ref AlertEmail, SubscriptionType: EMAIL }]
+      ResourceTags:
+        - Key: Type
+          Value: rDev
+        - Key: Name
+          Value: MonthlyCostBudget
+        - Key: Created
+          Value: !Ref CreatedDate
+
+Outputs:
+  BudgetName:
+    Value: !Ref MonthlyCostBudget
