@@ -1,4 +1,9 @@
-const { SSMClient, GetParameterCommand, PutParameterCommand } = require('@aws-sdk/client-ssm');
+const {
+  SSMClient,
+  AddTagsToResourceCommand,
+  GetParameterCommand,
+  PutParameterCommand,
+} = require('@aws-sdk/client-ssm');
 const https = require('https');
 const crypto = require('crypto');
 
@@ -15,6 +20,10 @@ async function putParam(name, value) {
     Value: value,
     Type: 'String',
     Overwrite: true,
+  }));
+  await ssm.send(new AddTagsToResourceCommand({
+    ResourceType: 'Parameter',
+    ResourceId: name,
     Tags: [
       { Key: 'Type', Value: 'rDev' },
       { Key: 'Name', Value: name.split('/').pop() },

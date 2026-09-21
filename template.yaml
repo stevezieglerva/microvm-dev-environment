@@ -492,9 +492,8 @@ Resources:
             Action: [iam:CreateRole, iam:PutRolePolicy, iam:DeleteRolePolicy, iam:AttachRolePolicy, iam:DetachRolePolicy, iam:PutRolePermissionsBoundary]
             Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/ipad-claude/deployments/*"
             Condition:
-              StringEquals:
+              ArnEquals:
                 iam:PermissionsBoundary: !Sub "arn:aws:iam::${AWS::AccountId}:policy/ipad-claude-sandbox-boundary"
-                iam:Path: /ipad-claude/deployments/
           - Sid: RoleLifecycle
             Effect: Allow
             Action: [iam:DeleteRole, iam:UpdateRole, iam:UpdateRoleDescription, iam:UpdateRoleDescription, iam:TagRole, iam:UntagRole]
@@ -623,9 +622,8 @@ Resources:
                 Action: [iam:CreateRole, iam:PutRolePolicy, iam:DeleteRolePolicy, iam:AttachRolePolicy, iam:DetachRolePolicy, iam:PutRolePermissionsBoundary]
                 Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/ipad-claude/deployments/*"
                 Condition:
-                  StringEquals:
+                  ArnEquals:
                     iam:PermissionsBoundary: !Ref SandboxPermissionsBoundary
-                    iam:Path: /ipad-claude/deployments/
               - Sid: RoleLifecycle
                 Effect: Allow
                 Action: [iam:DeleteRole, iam:UpdateRole, iam:UpdateRoleDescription, iam:TagRole, iam:UntagRole]
