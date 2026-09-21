@@ -1,0 +1,21 @@
+## Factory Skills
+
+- Tracker: `GitHub Issues + GitHub Projects`
+- Repository: `https://github.com/stevezieglerva/microvm-dev-environment`
+- GitHub project context: `context/github-project.md`
+- GitHub CLI account: `stevezieglerva`
+- Factory parent issue type: `Feature`
+- Factory child issue type: `Task`
+- Factory epic status: `Elaborate`
+- Factory todo status: `Todo`
+- Factory ready status: `Ready For Agent`
+- Factory in-progress status: `In Progress`
+- Factory review status: `Reviewing`
+- Factory deployed status: `Deployed`
+- Factory done status: `Done`
+- Factory priority label: `priority/P1`
+- Factory ready label: `ready-for-agent`
+- Factory epic label: `epic`
+- Factory native issue types: `false`
+- Factory status field: `Status`
+- Factory work type field: `Work Type`
