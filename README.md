@@ -173,6 +173,33 @@ anything by hand — `sam deploy` makes it all.
 
 ## Deploying
 
+### First install and recovery
+
+`scripts/deploy.sh` fails closed unless the caller is account `112280397275` in
+`us-east-1`. It deploys the independent `rdev-governance` stack first, then
+uses the same `ipad-claude` stack for both phases:
+
+1. Bootstrap: `sam build && sam deploy` creates the artifact bucket, IAM
+   boundary, and AgentCore gateway role with `MicrovmCodeUri` empty.
+2. Full install: `./scripts/deploy.sh` uploads the content-hashed image,
+   reconciles the named gateway/target, and updates that same stack.
+
+Rollback is disabled so an interrupted install can be diagnosed and retried;
+never delete the stack, retained workspace bucket, or Cognito pool as recovery.
+The immutable `CreatedDate` parameter is used for governance tags. The budget
+alerts at 50%, 80%, and 100% for both actual and forecast monthly spend, but
+does not cap AWS charges.
+
+Resources that AWS does not expose tag properties for are explicitly treated as
+untaggable: route-table associations, S3 Files mount targets, Cognito clients,
+bucket policies, CloudFront OAC, generated SAM resources, AgentCore targets,
+and runtime MicroVM instances. Their owning stack/resource identifiers remain
+in CloudFormation or deployment evidence.
+
+Local `sam validate --lint` may report E3006 for the emerging S3 Files,
+MicroVM Image, and Network Connector resource types (and a generated SAM
+condition reachability warning); deployed CloudFormation states are authoritative.
+
 **The one command that does everything is `./scripts/deploy.sh`** (see
 [Just run the script](#just-run-the-script) below). If you only want a working
 deployment, skip there.

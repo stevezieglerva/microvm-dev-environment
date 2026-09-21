@@ -5,15 +5,9 @@
 #                  MicroVM image entirely — frontend sync + smoke test only)
 #   --skip-mvm     skip the throwaway smoke-test VM
 #
-# No project-specific config file for profile/region/account: sam build and
-# sam deploy read stack_name/region/profile from samconfig.toml on their own
-# (that's what it's for — see samconfig.toml.example). This script's own raw
-# `aws` calls (the web-search gateway, S3 uploads, the smoke test — none of
-# which are `sam` commands, so samconfig.toml doesn't apply to them) rely on
-# the SAME standard AWS CLI resolution every script does: AWS_PROFILE /
-# AWS_REGION env vars, or your default profile. Export them once, or run
-# `AWS_PROFILE=... AWS_REGION=... ./scripts/deploy.sh` — nothing here parses
-# a config file to re-derive them.
+# The raw AWS calls and SAM use the same explicit profile and region. Set
+# AWS_PROFILE/AWS_REGION before invoking this script to select a deployment
+# context; otherwise the default profile and its configured region are used.
 #
 # The MicroVM image is a real CFN resource (AWS::Serverless::MicrovmImage) in
 # template.yaml, not a hand-rolled aws lambda-microvms CLI dance — its own
@@ -45,19 +39,45 @@ for arg in "$@"; do
   esac
 done
 
+AWS_PROFILE_NAME="${AWS_PROFILE:-default}"
+if [ -n "${AWS_REGION:-}" ]; then
+  REGION="$AWS_REGION"
+else
+  REGION="$(aws configure get region --profile "$AWS_PROFILE_NAME" 2>/dev/null || echo us-east-1)"
+fi
+EXPECTED_ACCOUNT="112280397275"
+EXPECTED_REGION="us-east-1"
+
 log() { echo -e "\033[1;36m▶ $*\033[0m"; }
 ok()  { echo -e "\033[1;32m✓ $*\033[0m"; }
 err() { echo -e "\033[1;31m✗ $*\033[0m" >&2; }
 
-# ── Show resolved AWS identity (no config-driven gate — just visual confirmation) ─
-log "Resolving AWS identity (from your default profile/env — see the header comment)..."
+# ── Fail closed before any account-level deployment operation ────────────────
+log "Resolving AWS identity..."
 CALLER=$(aws sts get-caller-identity --output json)
 CALLER_ACCOUNT=$(echo "$CALLER" | python3 -c "import sys,json; print(json.load(sys.stdin)['Account'])")
 CALLER_ARN=$(echo "$CALLER" | python3 -c "import sys,json; print(json.load(sys.stdin)['Arn'])")
-ok "Authenticated as $CALLER_ARN (account $CALLER_ACCOUNT) — Ctrl+C now if that's wrong"
+if [ "$CALLER_ACCOUNT" != "$EXPECTED_ACCOUNT" ] || [ "$REGION" != "$EXPECTED_REGION" ]; then
+  err "Refusing deployment: expected account $EXPECTED_ACCOUNT/$EXPECTED_REGION, got $CALLER_ACCOUNT/$REGION"
+  exit 1
+fi
+export AWS_PROFILE="$AWS_PROFILE_NAME"
+export AWS_REGION="$REGION"
+ok "Authenticated as $CALLER_ARN (account $CALLER_ACCOUNT, region $REGION)"
 
 out() { aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
   --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text 2>/dev/null || echo ""; }
+
+GOVERNANCE_STACK="rdev-governance"
+CREATED_DATE=$(aws cloudformation describe-stacks --stack-name "$GOVERNANCE_STACK" \
+  --query 'Stacks[0].CreationTime' --output text 2>/dev/null | cut -c1-10 || true)
+CREATED_DATE="${CREATED_DATE:-$(date -u +%F)}"
+log "Deploying account governance stack..."
+aws cloudformation deploy --stack-name "$GOVERNANCE_STACK" \
+  --template-file "$ROOT_DIR/governance.yaml" --capabilities CAPABILITY_IAM \
+  --parameter-overrides "CreatedDate=$CREATED_DATE" \
+  --tags Type=rDev Name=Governance Created="$CREATED_DATE" >/dev/null
+ok "Governance budget is active"
 
 # ── AgentCore web-search gateway + MicroVM image inputs ────────────────────────
 # Both MicrovmCodeUri and WebSearchGatewayUrl are inputs the MicrovmImage
@@ -77,19 +97,39 @@ if [ "$SKIP_INFRA" = false ]; then
   WEBSEARCH_GW_ROLE_ARN=$(out WebSearchGatewayRoleArn)
 
   if [ -z "$ARTIFACT_BUCKET" ] || [ -z "$WEBSEARCH_GW_ROLE_ARN" ]; then
-    err "Stack '$STACK_NAME' not found (or missing outputs) — this looks like a" \
-        "first-ever deploy. See the README's bootstrap note before running" \
-        "deploy.sh: the stack needs one initial 'sam deploy' to create the" \
-        "artifact bucket and the web-search gateway role before this script's" \
-        "two-way dependency (image needs the bucket, gateway needs the role,"\
-        "both need the stack) can resolve."
-    exit 1
+    log "Running first-install bootstrap (guardrails, artifact bucket, gateway role)..."
+    (cd "$ROOT_DIR" && sam build --template template.yaml)
+    (cd "$ROOT_DIR" && sam deploy --profile "$AWS_PROFILE_NAME" --region "$REGION" \
+      --parameter-overrides "MicrovmCodeUri= WebSearchGatewayUrl=" \
+      --no-confirm-changeset --no-fail-on-empty-changeset)
+    ARTIFACT_BUCKET=$(out ArtifactBucketName)
+    WEBSEARCH_GW_ROLE_ARN=$(out WebSearchGatewayRoleArn)
+    [ -n "$ARTIFACT_BUCKET" ] && [ -n "$WEBSEARCH_GW_ROLE_ARN" ] || { err "Bootstrap did not produce prerequisites"; exit 1; }
   fi
 
   log "Ensuring AgentCore web-search gateway..."
   GATEWAY_NAME="ipadclaudewebsearch"
-  GATEWAY_ID=$(aws bedrock-agentcore-control list-gateways \
-    --query "items[?name=='$GATEWAY_NAME'].gatewayId | [0]" --output text 2>/dev/null || echo "")
+  GATEWAYS=$(aws bedrock-agentcore-control list-gateways --output json 2>/dev/null || echo '{"items":[]}')
+  GATEWAY_COUNT=$(echo "$GATEWAYS" | python3 -c "import sys,json; print(sum(x.get('name')=='$GATEWAY_NAME' for x in json.load(sys.stdin).get('items',[])))")
+  [ "$GATEWAY_COUNT" -le 1 ] || { err "Multiple AgentCore gateways named $GATEWAY_NAME"; exit 1; }
+  GATEWAY_ID=$(echo "$GATEWAYS" | python3 -c "import sys,json; a=[x for x in json.load(sys.stdin).get('items',[]) if x.get('name')=='$GATEWAY_NAME']; print(a[0].get('gatewayId','') if a else '')")
+
+  if [ -n "$GATEWAY_ID" ] && [ "$GATEWAY_ID" != "None" ]; then
+    EXISTING_GW_STATUS=$(aws bedrock-agentcore-control get-gateway --gateway-identifier "$GATEWAY_ID" \
+      --query status --output text 2>/dev/null || echo "UNKNOWN")
+    case "$EXISTING_GW_STATUS" in
+      FAILED|CREATE_FAILED|UPDATE_FAILED|UPDATE_UNSUCCESSFUL)
+        log "Removing failed AgentCore gateway '$GATEWAY_ID' before recreation..."
+        aws bedrock-agentcore-control delete-gateway --gateway-identifier "$GATEWAY_ID" >/dev/null
+        for i in $(seq 1 30); do
+          aws bedrock-agentcore-control get-gateway --gateway-identifier "$GATEWAY_ID" \
+            --output json >/dev/null 2>&1 || break
+          sleep 2
+        done
+        GATEWAY_ID=""
+        ;;
+    esac
+  fi
 
   if [ -z "$GATEWAY_ID" ] || [ "$GATEWAY_ID" = "None" ]; then
     log "Creating AgentCore gateway '$GATEWAY_NAME'..."
@@ -98,6 +138,7 @@ if [ "$SKIP_INFRA" = false ]; then
       --protocol-type MCP \
       --authorizer-type AWS_IAM \
       --role-arn "$WEBSEARCH_GW_ROLE_ARN" \
+      --client-token "rdev-microvm-install-gateway-${STACK_NAME}-v1" \
       --output json)
     GATEWAY_ID=$(echo "$GW_OUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['gatewayId'])")
     WEBSEARCH_GATEWAY_URL=$(echo "$GW_OUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['gatewayUrl'])")
@@ -116,6 +157,7 @@ if [ "$SKIP_INFRA" = false ]; then
     aws bedrock-agentcore-control create-gateway-target \
       --gateway-identifier "$GATEWAY_ID" \
       --name "websearch" \
+      --client-token "rdev-microvm-install-target-${STACK_NAME}-v1" \
       --target-configuration '{"mcp":{"connector":{"source":{"connectorId":"web-search"},"configurations":[{"name":"WebSearch","parameterValues":{}}]}}}' \
       --credential-provider-configurations '[{"credentialProviderType":"GATEWAY_IAM_ROLE"}]' \
       --output json > /dev/null
@@ -130,8 +172,45 @@ if [ "$SKIP_INFRA" = false ]; then
   else
     WEBSEARCH_GATEWAY_URL=$(aws bedrock-agentcore-control get-gateway --gateway-identifier "$GATEWAY_ID" \
       --query gatewayUrl --output text 2>/dev/null || echo "")
-    ok "Web-search gateway exists: $GATEWAY_ID"
   fi
+  TARGETS=$(aws bedrock-agentcore-control list-gateway-targets --gateway-identifier "$GATEWAY_ID" --output json)
+  TARGET_COUNT=$(echo "$TARGETS" | python3 -c "import sys,json; print(sum(x.get('name')=='websearch' for x in json.load(sys.stdin).get('items',[])))")
+  [ "$TARGET_COUNT" -le 1 ] || { err "Multiple websearch targets on $GATEWAY_ID"; exit 1; }
+  if [ "$TARGET_COUNT" -eq 1 ]; then
+    TARGET_ID=$(echo "$TARGETS" | python3 -c "import sys,json; a=[x for x in json.load(sys.stdin).get('items',[]) if x.get('name')=='websearch']; print(a[0].get('targetId','') if a else '')")
+    TARGET_STATUS=$(echo "$TARGETS" | python3 -c "import sys,json; a=[x for x in json.load(sys.stdin).get('items',[]) if x.get('name')=='websearch']; print(a[0].get('status','') if a else '')")
+    case "$TARGET_STATUS" in
+      FAILED|CREATE_FAILED|UPDATE_FAILED|UPDATE_UNSUCCESSFUL|SYNCHRONIZE_UNSUCCESSFUL)
+        log "Removing failed AgentCore target '$TARGET_ID' before recreation..."
+        aws bedrock-agentcore-control delete-gateway-target \
+          --gateway-identifier "$GATEWAY_ID" --target-id "$TARGET_ID" >/dev/null
+        for i in $(seq 1 30); do
+          REMAINING_TARGETS=$(aws bedrock-agentcore-control list-gateway-targets \
+            --gateway-identifier "$GATEWAY_ID" --query "items[?targetId=='$TARGET_ID'] | length(@)" \
+            --output text 2>/dev/null || echo "0")
+          [ "$REMAINING_TARGETS" = "0" ] && break
+          sleep 2
+        done
+        TARGET_COUNT=0
+        ;;
+    esac
+  fi
+  if [ "$TARGET_COUNT" -eq 0 ]; then
+    aws bedrock-agentcore-control create-gateway-target \
+      --gateway-identifier "$GATEWAY_ID" --name websearch \
+      --client-token "rdev-microvm-install-target-${STACK_NAME}-v1" \
+      --target-configuration '{"mcp":{"connector":{"source":{"connectorId":"web-search"},"configurations":[{"name":"WebSearch","parameterValues":{}}]}}}' \
+      --credential-provider-configurations '[{"credentialProviderType":"GATEWAY_IAM_ROLE"}]' >/dev/null
+  fi
+  for i in $(seq 1 30); do
+    GW_STATUS=$(aws bedrock-agentcore-control get-gateway --gateway-identifier "$GATEWAY_ID" --query status --output text)
+    TGT_STATUS=$(aws bedrock-agentcore-control list-gateway-targets --gateway-identifier "$GATEWAY_ID" \
+      --query "items[?name=='websearch'].status | [0]" --output text)
+    [ "$GW_STATUS" = "READY" ] && [ "$TGT_STATUS" = "READY" ] && break
+    sleep 2
+  done
+  [ "$GW_STATUS" = "READY" ] && [ "$TGT_STATUS" = "READY" ] || { err "AgentCore not ready: gateway=$GW_STATUS target=$TGT_STATUS"; exit 1; }
+  ok "Web-search gateway ready: $GATEWAY_ID (target: $TGT_STATUS)"
   ok "Web-search MCP endpoint: $WEBSEARCH_GATEWAY_URL"
 
   # ── Package the MicroVM image source and compute its content-hash S3 key ────
@@ -144,11 +223,6 @@ if [ "$SKIP_INFRA" = false ]; then
   log "Packaging MicroVM source..."
   BUILD_DIR="/tmp/remote-dev-microvm-build"
   rm -rf "$BUILD_DIR"; cp -R "$ROOT_DIR/microvm" "$BUILD_DIR"
-  # Render the account-specific FS id into the copy only — never commit it.
-  S3_FILES_FS_ID=$(out S3FilesFileSystemId)
-  sed -i.bak "s|^ENV S3_FILES_FS_ID=.*|ENV S3_FILES_FS_ID=${S3_FILES_FS_ID}|" "$BUILD_DIR/Dockerfile"
-  rm -f "$BUILD_DIR/Dockerfile.bak"
-
   ZIP_PATH="/tmp/remote-dev-microvm.zip"
   rm -f "$ZIP_PATH"
   (cd "$BUILD_DIR" && zip -r "$ZIP_PATH" . -x "*.DS_Store" > /dev/null)
@@ -161,9 +235,8 @@ if [ "$SKIP_INFRA" = false ]; then
 fi
 
 # ── Infrastructure + MicroVM image: SAM build + deploy ─────────────────────────
-# No --profile/--region/--stack-name here — sam reads all three from
-# samconfig.toml on its own. --parameter-overrides supplies ONLY the two
-# values that are genuinely computed above; anything else set via
+# samconfig.toml still supplies the stack name. --parameter-overrides supplies
+# ONLY the two values that are genuinely computed above; anything else set via
 # samconfig.toml's own parameter_overrides (e.g. LoginEmail) is retained
 # unchanged by CloudFormation, since it isn't mentioned in this list.
 if [ "$SKIP_INFRA" = false ]; then
@@ -172,13 +245,19 @@ if [ "$SKIP_INFRA" = false ]; then
 
   log "Deploying SAM stack (this includes the MicroVM image build if microvm/" \
       "changed — CloudFormation waits for it, ~5-10 min on a real change)..."
-  (cd "$ROOT_DIR" && sam deploy \
+  (cd "$ROOT_DIR" && sam deploy --profile "$AWS_PROFILE_NAME" --region "$REGION" \
     --parameter-overrides "MicrovmCodeUri=$MICROVM_CODE_URI WebSearchGatewayUrl=$WEBSEARCH_GATEWAY_URL" \
     --no-confirm-changeset --no-fail-on-empty-changeset)
   ok "SAM stack deployed"
 else
   log "Skipping infra (--skip-infra), using existing stack outputs..."
 fi
+
+# AWS::IAM::ManagedPolicy has no CloudFormation Tags property; tag the boundary
+# explicitly after each successful reconciliation.
+aws iam tag-policy \
+  --policy-arn "arn:aws:iam::${CALLER_ACCOUNT}:policy/ipad-claude-sandbox-boundary" \
+  --tags Key=Type,Value=rDev Key=Name,Value=SandboxPermissionsBoundary Key=Created,Value="$CREATED_DATE" >/dev/null
 
 # ── Read stack outputs (SAM creates a normal CloudFormation stack) ────────────
 # TokenApiUrl/FrontendUrl/UserPoolId/LoginEmail/CreateUserCommand etc. were
@@ -209,11 +288,9 @@ sed "s|<script>window.APP_CONFIG = {}; /\* APP_CONFIG_PLACEHOLDER \*/</script>|<
 
 # Sync updated frontend (render replaces the placeholder file in the upload dir)
 log "Syncing frontend to S3 ($FRONTEND_BUCKET)..."
-cp "$RENDERED" "$ROOT_DIR/frontend/index.html.rendered"
-aws s3 cp "$RENDERED" "s3://$FRONTEND_BUCKET/index.html" \
+  aws s3 cp "$RENDERED" "s3://$FRONTEND_BUCKET/index.html" \
   --cache-control "no-cache, no-store, must-revalidate" \
   --content-type "text/html"
-rm -f "$ROOT_DIR/frontend/index.html.rendered"
 
 if [ -n "$CF_DIST_ID" ]; then
   aws cloudfront create-invalidation \
@@ -229,6 +306,28 @@ ok "Frontend synced and CDN invalidated"
 # mount path, we create a temporary access point and pass its id via
 # --run-hook-payload, exactly as the Lambda does.
 SMOKE_AP=""
+MVM_ID=""
+cleanup_smoke() {
+  set +e
+  if [ -n "$MVM_ID" ]; then
+    aws lambda-microvms terminate-microvm --microvm-identifier "$MVM_ID" >/dev/null 2>&1
+    for _ in $(seq 1 30); do
+      state=$(aws lambda-microvms get-microvm --microvm-identifier "$MVM_ID" --query state --output text 2>/dev/null)
+      [[ "$state" == "TERMINATED" || "$state" == "None" || -z "$state" ]] && break
+      sleep 2
+    done
+  fi
+  if [ -n "$SMOKE_AP" ] && [ "$SMOKE_AP" != "None" ]; then
+    aws s3files delete-access-point --access-point-id "$SMOKE_AP" >/dev/null 2>&1
+    for _ in $(seq 1 30); do
+      found=$(aws s3files list-access-points --file-system-id "$S3_FILES_FS_ID" \
+        --query "accessPoints[?accessPointId=='$SMOKE_AP'].accessPointId | [0]" --output text 2>/dev/null)
+      [ "$found" = "None" ] || [ -z "$found" ] && break
+      sleep 2
+    done
+  fi
+}
+trap cleanup_smoke EXIT INT TERM
 if [ "$SKIP_MVM" = false ]; then
   if [ -z "$IMAGE_ID" ]; then
     err "No MicrovmImageArn stack output — run without --skip-infra at least once first."
@@ -309,10 +408,7 @@ if [ "$SKIP_MVM" = false ] && [ -n "$MVM_ID" ]; then
   # Tear down the throwaway smoke-test VM + access point — real per-user VMs
   # are launched by the token Lambda at login.
   log "Tearing down smoke-test VM..."
-  aws lambda-microvms terminate-microvm --microvm-identifier "$MVM_ID" 2>/dev/null || true
-  if [ -n "$SMOKE_AP" ] && [ "$SMOKE_AP" != "None" ]; then
-    aws s3files delete-access-point --access-point-id "$SMOKE_AP" 2>/dev/null || true
-  fi
+  cleanup_smoke
   MVM_STATE="smoke-tested + torn down"
 fi
 

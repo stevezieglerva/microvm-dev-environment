@@ -1,4 +1,9 @@
-const { SSMClient, GetParameterCommand, PutParameterCommand } = require('@aws-sdk/client-ssm');
+const {
+  SSMClient,
+  AddTagsToResourceCommand,
+  GetParameterCommand,
+  PutParameterCommand,
+} = require('@aws-sdk/client-ssm');
 const https = require('https');
 const crypto = require('crypto');
 
@@ -10,7 +15,21 @@ async function getParam(name, decrypt = false) {
 }
 
 async function putParam(name, value) {
-  await ssm.send(new PutParameterCommand({ Name: name, Value: value, Type: 'String', Overwrite: true }));
+  await ssm.send(new PutParameterCommand({
+    Name: name,
+    Value: value,
+    Type: 'String',
+    Overwrite: true,
+  }));
+  await ssm.send(new AddTagsToResourceCommand({
+    ResourceType: 'Parameter',
+    ResourceId: name,
+    Tags: [
+      { Key: 'Type', Value: 'rDev' },
+      { Key: 'Name', Value: name.split('/').pop() },
+      { Key: 'Created', Value: new Date().toISOString().slice(0, 10) },
+    ],
+  }));
 }
 
 function sigv4Request(method, hostname, path, body, service = 'lambda') {
@@ -89,6 +108,11 @@ async function ensureUserAccessPoint(sub) {
       creationPermissions: { ownerUid: 1000, ownerGid: 1000, permissions: '0755' },
     },
     clientToken: `ap-${sub}`.slice(0, 64), // idempotent create per user
+    tags: [
+      { key: 'Type', value: 'rDev' },
+      { key: 'Name', value: `UserAccessPoint-${sub}` },
+      { key: 'Created', value: new Date().toISOString().slice(0, 10) },
+    ],
   };
   const data = await sigv4Request('PUT', s3filesHost(), '/access-points', body, 's3files');
   const apId = data.accessPointId;
@@ -120,6 +144,7 @@ async function runNewMvm(accessPointId) {
   const networkConnectorArn = process.env.NETWORK_CONNECTOR_ARN;
 
   const body = {
+    clientToken: `mvm-${process.env.AWS_LAMBDA_FUNCTION_NAME}-${accessPointId}`.slice(0, 64),
     imageIdentifier: imageArn,
     executionRoleArn,
     // Idle = no INBOUND proxy traffic. Outbound work (Claude calling Bedrock)
