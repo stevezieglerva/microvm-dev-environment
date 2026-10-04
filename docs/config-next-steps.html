@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Configuration follow-up plan for deploying the microvm development environment.">
+  <title>Deployment Configuration · Next Steps</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23162e51'/%3E%3Cpath d='M10 12h20v4H10zm0 8h14v4H10zm0 8h20v4H10z' fill='%2300bde3'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: light;
+      --navy: #162e51;
+      --blue: #005ea2;
+      --cyan: #00bde3;
+      --ink: #1b1b1b;
+      --muted: #565c65;
+      --line: #dfe1e2;
+      --surface: #f0f0f0;
+      --white: #ffffff;
+      --success: #ecf3ec;
+      --success-ink: #216e1f;
+      --warning: #faf3d1;
+      --warning-ink: #5c410a;
+      --font-sans: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'Roboto Mono', 'Courier New', monospace;
+      --text-sm: 1rem;
+      --text-xs: .875rem;
+      --text-lg: 1.375rem;
+      --text-xl: 2rem;
+      --space-1: .25rem;
+      --space-2: .5rem;
+      --space-3: .75rem;
+      --space-4: 1rem;
+      --space-5: 1.5rem;
+      --space-6: 2rem;
+      --space-7: 2.5rem;
+      --max-width: 64rem;
+      --radius: .25rem;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; background: var(--white); color: var(--ink); font: var(--text-sm)/1.6 var(--font-sans); }
+    a { color: var(--blue); }
+    a:focus-visible, summary:focus-visible { outline: .2rem solid var(--cyan); outline-offset: .2rem; }
+    .wrap { width: min(100% - 2rem, var(--max-width)); margin-inline: auto; }
+    .masthead { background: var(--navy); color: var(--white); border-bottom: .25rem solid var(--cyan); padding-block: var(--space-5); }
+    .eyebrow { margin: 0 0 var(--space-2); color: #97d4ea; font-size: var(--text-xs); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { max-width: 42rem; margin: 0; font-size: clamp(var(--text-xl), 5vw, 2.75rem); line-height: 1.12; }
+    .subtitle { max-width: 46rem; margin: var(--space-3) 0 0; color: #e1f3f8; }
+    main { padding-block: var(--space-6) var(--space-7); }
+    h2 { margin: 0 0 var(--space-4); font-size: var(--text-lg); line-height: 1.25; }
+    p { margin: 0 0 var(--space-3); }
+    .status { display: grid; grid-template-columns: auto 1fr; gap: var(--space-3); align-items: start; padding: var(--space-4); margin-bottom: var(--space-6); border-left: .25rem solid var(--success-ink); background: var(--success); }
+    .status strong { color: var(--success-ink); }
+    .pill { display: inline-block; border-radius: 99rem; padding: .15rem .65rem; background: var(--success-ink); color: var(--white); font-size: var(--text-xs); font-weight: 700; white-space: nowrap; }
+    .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); margin-bottom: var(--space-7); }
+    .fact { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-4); }
+    .fact dt { color: var(--muted); font-size: var(--text-xs); font-weight: 600; }
+    .fact dd { margin: var(--space-1) 0 0; font-weight: 700; overflow-wrap: anywhere; }
+    code { font-family: var(--font-mono); font-size: .9em; }
+    .steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+    .steps li { position: relative; margin: 0 0 var(--space-3); padding: var(--space-4) var(--space-5) var(--space-4) 4.5rem; border: 1px solid var(--line); border-radius: var(--radius); counter-increment: step; }
+    .steps li::before { content: counter(step, decimal-leading-zero); position: absolute; left: var(--space-4); top: var(--space-4); color: var(--blue); font: 600 var(--text-sm) var(--font-mono); }
+    .steps h3 { margin: 0 0 var(--space-2); font-size: var(--text-sm); }
+    .steps p { margin: 0; color: var(--muted); }
+    .steps .check { display: block; margin-top: var(--space-2); color: var(--ink); font-size: var(--text-xs); }
+    .callout { margin-top: var(--space-6); padding: var(--space-4) var(--space-5); background: var(--warning); border-left: .25rem solid #ffbe2e; }
+    .callout strong { color: var(--warning-ink); }
+    footer { border-top: 1px solid var(--line); padding-block: var(--space-4); color: var(--muted); font-size: var(--text-xs); }
+    @media (max-width: 42rem) {
+      .summary { grid-template-columns: 1fr; }
+      .steps li { padding-left: 3.75rem; }
+      .steps li::before { left: var(--space-3); }
+      .status { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }
+  </style>
+</head>
+<body>
+  <header class="masthead">
+    <div class="wrap">
+      <p class="eyebrow">MicroVM Dev Environment · Configuration plan</p>
+      <h1>Deployment configuration: next steps</h1>
+      <p class="subtitle">A short, ordered checklist to make the successful deployment repeatable, predictable, and easier to maintain.</p>
+    </div>
+  </header>
+  <main class="wrap">
+    <section class="status" aria-label="Current status">
+      <span class="pill">Applied</span>
+      <div><strong>The stack is tagged <code>Type=ai-vm</code>.</strong><p>Deployment configuration now supplies the tag from both the example SAM config and <code>scripts/deploy.sh</code>. The current AWS stack was confirmed in <code>UPDATE_COMPLETE</code>.</p></div>
+    </section>
+
+    <section aria-labelledby="snapshot-title">
+      <h2 id="snapshot-title">Configuration snapshot</h2>
+      <dl class="summary">
+        <div class="fact"><dt>Stack</dt><dd><code>ipad-claude</code></dd></div>
+        <div class="fact"><dt>Region</dt><dd><code>us-east-1</code></dd></div>
+        <div class="fact"><dt>Tag sent on deploy</dt><dd><code>Type=ai-vm</code></dd></div>
+      </dl>
+    </section>
+
+    <section aria-labelledby="steps-title">
+      <h2 id="steps-title">Next steps</h2>
+      <ol class="steps">
+        <li>
+          <h3>Keep local and shared SAM config aligned</h3>
+          <p>When creating or updating the ignored local <code>samconfig.toml</code>, retain <code>tags = "Type=\"ai-vm\""</code> under <code>[default.deploy.parameters]</code>. Keep the same setting in <code>samconfig.toml.example</code> so fresh checkouts inherit it.</p>
+          <span class="check">Done when: a new local config copied from the example includes the tag.</span>
+        </li>
+        <li>
+          <h3>Confirm repeat deploy behavior</h3>
+          <p>Run the normal deploy flow against the intended AWS profile and verify the CloudFormation stack still reports <code>Type=ai-vm</code> after an update. The script passes <code>--tags</code> explicitly, so its behavior does not depend only on local SAM config.</p>
+          <span class="check">Done when: a routine update completes and the stack tag remains present.</span>
+        </li>
+        <li>
+          <h3>Make first-deploy configuration unambiguous</h3>
+          <p>Reconcile the README bootstrap sequence with <code>deploy.sh</code>'s prerequisite check. The script expects stack outputs for the artifact bucket and gateway role before its full deploy; document the exact first-time commands and required parameters in one canonical sequence.</p>
+          <span class="check">Done when: a new operator can bootstrap from a clean account without guessing which deploy command to run first.</span>
+        </li>
+        <li>
+          <h3>Review deployment identity and permissions</h3>
+          <p>Document the expected AWS account/profile and the permissions required by the full deploy, including CloudFormation resource tagging. Review any temporary bootstrap permissions and reduce or remove them when they are no longer needed.</p>
+          <span class="check">Done when: the deploy guide names the target identity and the retained policy is least-privilege for ongoing operations.</span>
+        </li>
+        <li>
+          <h3>Decide whether resources need the same tag</h3>
+          <p>The requested tag is set on the CloudFormation stack. Check the resources and cost reports that matter to confirm whether stack-level tag propagation is sufficient, or whether selected template resources need explicit tags.</p>
+          <span class="check">Done when: the tagging scope is documented and verified against the intended inventory or cost-allocation use.</span>
+        </li>
+      </ol>
+    </section>
+
+    <aside class="callout"><strong>Before another deployment:</strong> confirm the AWS caller identity and account shown by <code>deploy.sh</code>. The script follows the active AWS profile/environment and does not select an account on its own.</aside>
+  </main>
+  <footer><div class="wrap">Prepared from the repository deployment configuration and reported stack state. Update this checklist when the bootstrap workflow or deployment permissions change.</div></footer>
+</body>
+</html>
