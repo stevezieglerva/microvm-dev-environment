@@ -174,6 +174,7 @@ if [ "$SKIP_INFRA" = false ]; then
       "changed — CloudFormation waits for it, ~5-10 min on a real change)..."
   (cd "$ROOT_DIR" && sam deploy \
     --parameter-overrides "MicrovmCodeUri=$MICROVM_CODE_URI WebSearchGatewayUrl=$WEBSEARCH_GATEWAY_URL" \
+    --tags "Type=ai-vm" \
     --no-confirm-changeset --no-fail-on-empty-changeset)
   ok "SAM stack deployed"
 else
