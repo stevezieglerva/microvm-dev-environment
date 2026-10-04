@@ -4,7 +4,8 @@ The stack supports a reversible migration from the managed NAT Gateway to one
 ARM64 Amazon Linux 2023 `t4g.nano` EC2 NAT instance. The instance is in
 `PublicSubnet1`; both private subnets continue to use their shared route table.
 The single instance creates a cross-AZ dependency for `PrivateSubnet2`, so this
-design is intended for the single-user development environment.
+design is intended for the single-user development environment. See
+[ADR 0001](adr/0001-use-stoppable-ec2-nat-instance.md) for the decision record.
 
 ## Modes and safe transitions
 

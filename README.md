@@ -231,9 +231,10 @@ checks before activating the instance.
 | `instance-active` | NAT instance | gateway, EIP, and NAT instance |
 | `instance-only` | NAT instance | NAT instance and EIP |
 
-See [docs/nat-instance-runbook.md](docs/nat-instance-runbook.md) for
-migration, validation, daily start/stop operation, rollback, monitoring, and
-cost assumptions.
+See [ADR 0001](docs/adr/0001-use-stoppable-ec2-nat-instance.md) for the
+decision record and [docs/nat-instance-runbook.md](docs/nat-instance-runbook.md)
+for migration, validation, daily start/stop operation, rollback, monitoring,
+and cost assumptions.
 
 ### Stage 1 — Infrastructure (SAM)
 
