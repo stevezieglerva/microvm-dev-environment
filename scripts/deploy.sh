@@ -213,10 +213,10 @@ fi
 
 # ── Infrastructure + MicroVM image: SAM build + deploy ─────────────────────────
 # No --profile/--region/--stack-name here — sam reads all three from
-# samconfig.toml on its own. --parameter-overrides supplies ONLY the two
-# values that are genuinely computed above; anything else set via
-# samconfig.toml's own parameter_overrides (e.g. LoginEmail) is retained
-# unchanged by CloudFormation, since it isn't mentioned in this list.
+# samconfig.toml on its own. --parameter-overrides supplies the computed
+# MicrovmCodeUri and WebSearchGatewayUrl, plus the resolved NAT mode; anything
+# else set via samconfig.toml's own parameter_overrides (e.g. LoginEmail) is
+# retained unchanged by CloudFormation, since it isn't mentioned in this list.
 if [ "$SKIP_INFRA" = false ]; then
   log "Building SAM application..."
   (cd "$ROOT_DIR" && sam build --template template.yaml)
@@ -224,7 +224,7 @@ if [ "$SKIP_INFRA" = false ]; then
   log "Deploying SAM stack (this includes the MicroVM image build if microvm/" \
       "changed — CloudFormation waits for it, ~5-10 min on a real change)..."
   (cd "$ROOT_DIR" && sam deploy \
-    --parameter-overrides "MicrovmCodeUri=$MICROVM_CODE_URI WebSearchGatewayUrl=$WEBSEARCH_GATEWAY_URL" \
+    --parameter-overrides "MicrovmCodeUri=$MICROVM_CODE_URI WebSearchGatewayUrl=$WEBSEARCH_GATEWAY_URL NatMode=$RESOLVED_NAT_MODE" \
     --tags "Type=ai-vm" \
     --no-confirm-changeset --no-fail-on-empty-changeset)
   ok "SAM stack deployed"
