@@ -57,17 +57,17 @@ switching to `instance-active`.
    iptables -t nat -S POSTROUTING
    ```
 
-4. Before changing the route, validate from workloads in both private
-   subnets and from a real MicroVM connector: external HTTPS, AWS and
-   Bedrock APIs, package and Git access, AgentCore web search, and the S3
-   Files mount. Capture successful results for each subnet.
-
-5. Switch private egress to the instance while retaining the gateway for
+4. Switch private egress to the instance while retaining the gateway for
    rollback:
 
    ```bash
    ./scripts/deploy.sh --nat-mode instance-active --skip-mvm
    ```
+
+5. Validate external HTTPS, AWS and Bedrock APIs, package and Git access,
+   AgentCore web search, and the S3 Files mount from workloads in both private
+   subnets and from a real MicroVM connector. Capture successful results for
+   each subnet.
 
 Keep `instance-active` for a 24–48 hour soak. Monitor the
 `ipad-claude-nat-instance` dashboard and its status, CPU credit, memory, and
@@ -108,6 +108,8 @@ The instance's Elastic IP and 8 GiB EBS volume continue billing while it is
 stopped. The instance itself does not accrue running compute charges while
 stopped. Do not stop it while active sessions need package downloads, Git,
 Bedrock, AgentCore, or S3 Files network access.
+CloudWatch metrics stop while the instance is stopped; alarms treat missing
+data as non-breaching, so check its EC2 status directly after starting it.
 
 ## Rollback
 

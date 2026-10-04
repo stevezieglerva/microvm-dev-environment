@@ -217,6 +217,7 @@ Resources:
       IamInstanceProfile: !Ref NatInstanceProfile
       Monitoring: true
       SourceDestCheck: false
+      PropagateTagsToVolumeOnCreation: true
       CreditSpecification:
         CPUCredits: standard
       MetadataOptions:
@@ -263,7 +264,9 @@ Resources:
           iptables -P FORWARD DROP
           iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -d 10.0.0.0/16 -j ACCEPT
           iptables -A FORWARD -s 10.0.0.0/16 -j ACCEPT
-          iptables -t nat -A POSTROUTING -s 10.0.0.0/16 ! -d 10.0.0.0/16 -o eth0 -j MASQUERADE
+          EGRESS_INTERFACE=$(ip -o route show default | awk 'NR == 1 { print $5 }')
+          test -n "$EGRESS_INTERFACE"
+          iptables -t nat -A POSTROUTING -s 10.0.0.0/16 ! -d 10.0.0.0/16 -o "$EGRESS_INTERFACE" -j MASQUERADE
           iptables-save >/etc/sysconfig/iptables
           systemctl enable iptables
 
@@ -351,7 +354,7 @@ Resources:
       EvaluationPeriods: 1
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
-      TreatMissingData: breaching
+      TreatMissingData: notBreaching
       Tags:
         - { Key: Name, Value: ipad-claude-nat-status-alarm }
         - { Key: Type, Value: ai-vm }
@@ -389,7 +392,7 @@ Resources:
       EvaluationPeriods: 2
       Threshold: 104857600
       ComparisonOperator: LessThanThreshold
-      TreatMissingData: breaching
+      TreatMissingData: notBreaching
       Tags:
         - { Key: Name, Value: ipad-claude-nat-memory-alarm }
         - { Key: Type, Value: ai-vm }
@@ -408,7 +411,7 @@ Resources:
       EvaluationPeriods: 2
       Threshold: 80
       ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: breaching
+      TreatMissingData: notBreaching
       Tags:
         - { Key: Name, Value: ipad-claude-nat-conntrack-alarm }
         - { Key: Type, Value: ai-vm }
