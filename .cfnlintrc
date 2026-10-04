@@ -1,0 +1,4 @@
+ignore_checks:
+  # These provider extensions are registered by services that cfn-lint does
+  # not know in the local us-east-1 resource specification.
+  - E3006

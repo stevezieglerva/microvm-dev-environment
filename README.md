@@ -86,7 +86,8 @@ flowchart TD
   including building/updating the MicroVM image; only the AgentCore
   web-search gateway is created out-of-band by `deploy.sh` (a CFN resource
   handler bug with the connector's target config — see that resource's
-  comment).
+  comment). NAT egress can use the managed gateway or the staged EC2 NAT
+  instance migration described in the [NAT instance runbook](docs/nat-instance-runbook.md).
 
 **Per-user isolation:** each Cognito user gets their own MicroVM and their own
 home directory (an S3 Files access point scoped to their `sub`). Adding a user
@@ -215,6 +216,25 @@ Helper used by every stage below — pulls one stack output by key (relies on
 out() { aws cloudformation describe-stacks --stack-name ipad-claude \
   --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
 ```
+
+### NAT egress modes
+
+`deploy.sh` supports four adjacent rollout modes. Omitting `--nat-mode` reads
+the mode already stored in the stack, so routine deployments preserve the
+selected route. The script rejects unsafe jumps and requires EC2 readiness
+checks before activating the instance.
+
+| Mode | Route | Resources |
+| --- | --- | --- |
+| `gateway` | NAT Gateway | gateway and EIP |
+| `instance-standby` | NAT Gateway | gateway, EIP, and NAT instance |
+| `instance-active` | NAT instance | gateway, EIP, and NAT instance |
+| `instance-only` | NAT instance | NAT instance and EIP |
+
+See [ADR 0001](docs/adr/0001-use-stoppable-ec2-nat-instance.md) for the
+decision record and [docs/nat-instance-runbook.md](docs/nat-instance-runbook.md)
+for migration, validation, daily start/stop operation, rollback, monitoring,
+and cost assumptions.
 
 ### Stage 1 — Infrastructure (SAM)
 
@@ -363,6 +383,7 @@ It does **not** launch a persistent VM — that happens per user at login.
 | *(none)* | Full deploy: web-search gateway + SAM stack (incl. image) + frontend + smoke test |
 | `--skip-infra` | Reuse the existing stack outputs — frontend sync + smoke test only |
 | `--skip-mvm` | Deploy infra/image but skip the throwaway smoke-test VM |
+| `--nat-mode <mode>` | Select `gateway`, `instance-standby`, `instance-active`, or `instance-only`; omitted mode is preserved |
 
 **Bootstrapping a brand-new stack:** `deploy.sh` resolves `ArtifactBucketName`
 and `WebSearchGatewayRoleArn` from the stack's *existing* outputs before it
