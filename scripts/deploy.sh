@@ -240,6 +240,7 @@ fi
 EXECUTION_ROLE=$(out ExecutionRoleArn)
 FRONTEND_BUCKET=$(out FrontendBucketName)
 CF_DIST_ID=$(out CloudFrontDistributionId)
+LOGIN_URL=$(out FrontendUrl)
 USER_POOL_ID=$(out UserPoolId)
 USER_POOL_CLIENT_ID=$(out UserPoolClientId)
 TOKEN_API_URL=$(out TokenApiUrl)
@@ -369,12 +370,16 @@ if [ "$SKIP_MVM" = false ] && [ -n "$MVM_ID" ]; then
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
-# Deliberately short: TokenApiUrl, FrontendUrl, UserPoolId, LoginEmail, and
-# CreateUserCommand were all already printed by `sam deploy` itself above —
-# this only reports what THIS script uniquely did (the smoke test).
+# Most stack outputs are printed by `sam deploy`; repeat the login URL here so
+# it is easy to find after the full deployment and smoke test finish.
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Remote Developer (rDev) — Deployed Successfully"
 echo "  Smoke test: $MVM_STATE"
+if [ -n "$LOGIN_URL" ] && [ "$LOGIN_URL" != "None" ]; then
+  echo "  Login URL: $LOGIN_URL"
+else
+  echo "  Login URL: unavailable (FrontendUrl stack output is missing)"
+fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
