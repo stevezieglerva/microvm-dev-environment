@@ -262,6 +262,19 @@ Resources:
           #!/bin/bash
           set -euxo pipefail
 
+          if [ ! -e /swapfile ]; then
+            if ! fallocate -l 1G /swapfile; then
+              rm -f /swapfile
+              dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
+            fi
+          fi
+          chmod 600 /swapfile
+          if ! swapon --noheadings --raw --show=NAME | grep -Fxq /swapfile; then
+            mkswap /swapfile
+            swapon /swapfile
+          fi
+          grep -qE '^/swapfile[[:space:]]' /etc/fstab || echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
+
           dnf install -y amazon-cloudwatch-agent aws-cfn-bootstrap awscli-2 conntrack-tools iptables-services
 
           signal_bootstrap_failure() {
