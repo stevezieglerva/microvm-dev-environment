@@ -1,9 +1,9 @@
 # NAT instance runbook
 
 The stack supports a reversible migration from the managed NAT Gateway to one
-ARM64 Amazon Linux 2023 `t4g.small` EC2 NAT instance with 2 GiB of memory. The
-instance is in `PublicSubnet1`; both private subnets continue to use their
-shared route table.
+ARM64 Amazon Linux 2023 `t4g.nano` EC2 NAT instance with 0.5 GiB of RAM and a
+1 GiB disk-backed swap file. The instance is in `PublicSubnet1`; both private
+subnets continue to use their shared route table.
 The single instance creates a cross-AZ dependency for `PrivateSubnet2`, so this
 design is intended for the single-user development environment. See
 [ADR 0001](adr/0001-use-stoppable-ec2-nat-instance.md) for the NAT design and
@@ -159,12 +159,11 @@ route back, then `gateway` to remove the instance. Never skip a mode.
 
 ## Cost and monitoring assumptions
 
-Approximate us-east-1 monthly cost is $10.35 when the `t4g.small` runs 12 hours
-per day, or $16.46 continuously, compared with roughly $36 for the always-on
-managed gateway and EIP. The increase over `t4g.nano` is about $4.60 at 12 hours
-per day or $9.20 continuously; these are compute-only differences. Estimates
-exclude data transfer, NAT processing, CloudWatch monitoring, taxes, and price
-changes. A stopped instance still incurs Elastic IP and EBS storage charges.
+Approximate us-east-1 monthly cost is $5.75 when the `t4g.nano` runs 12 hours
+per day, or $7.26 continuously, compared with roughly $36 for the always-on
+managed gateway and EIP. Estimates exclude data transfer, NAT processing,
+CloudWatch monitoring, taxes, and price changes. A stopped instance still
+incurs Elastic IP and EBS storage charges.
 
 The instance uses SSM and IMDSv2, has no SSH key or management ingress, and
 disables source/destination checks. A systemd-managed iptables service restores

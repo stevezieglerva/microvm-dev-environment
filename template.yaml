@@ -233,7 +233,7 @@ Resources:
         Timeout: PT30M
     Properties:
       ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}}"
-      InstanceType: t4g.small
+      InstanceType: t4g.nano
       IamInstanceProfile: !Ref NatInstanceProfile
       Monitoring: true
       PropagateTagsToVolumeOnCreation: true
