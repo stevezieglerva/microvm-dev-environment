@@ -422,6 +422,10 @@ Resources:
     Condition: UseNatInstance
     Properties:
       DashboardName: ipad-claude-nat-instance
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-instance-dashboard }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
       DashboardBody: !Sub |
         {
           "widgets": [
