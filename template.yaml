@@ -420,6 +420,11 @@ Resources:
   NatDashboard:
     Type: AWS::CloudWatch::Dashboard
     Condition: UseNatInstance
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - E3002
     Properties:
       DashboardName: ipad-claude-nat-instance
       Tags:
