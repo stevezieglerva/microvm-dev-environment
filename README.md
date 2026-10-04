@@ -236,6 +236,12 @@ decision record and [docs/nat-instance-runbook.md](docs/nat-instance-runbook.md)
 for migration, validation, daily start/stop operation, rollback, monitoring,
 and cost assumptions.
 
+When an EC2 NAT route is active, MicroVM login starts the NAT instance and
+continues without waiting for EC2 readiness. A serialized controller keeps it
+running while sessions are active or uncertain and shuts it down after all
+tracked sessions are suspended or terminated. Gateway routes retain their
+existing behavior.
+
 ### Stage 1 — Infrastructure (SAM)
 
 The whole stack is one AWS SAM template (`template.yaml`): the VPC + NAT +

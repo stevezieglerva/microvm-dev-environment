@@ -1,9 +1,9 @@
 # NAT instance runbook
 
 The stack supports a reversible migration from the managed NAT Gateway to one
-ARM64 Amazon Linux 2023 `t4g.small` EC2 NAT instance with 2 GiB of memory. The
-instance is in `PublicSubnet1`; both private subnets continue to use their
-shared route table.
+ARM64 Amazon Linux 2023 `t4g.nano` EC2 NAT instance with 0.5 GiB of RAM and a
+1 GiB disk-backed swap file. The instance is in `PublicSubnet1`; both private
+subnets continue to use their shared route table.
 The single instance creates a cross-AZ dependency for `PrivateSubnet2`, so this
 design is intended for the single-user development environment. See
 [ADR 0001](adr/0001-use-stoppable-ec2-nat-instance.md) for the NAT design and
@@ -101,7 +101,29 @@ Only this mode deletes the gateway resources. The instance EIP and encrypted
 
 ## Daily operation
 
-Start the instance before starting MicroVM work, then wait for both the
+In `instance-active` and `instance-only`, the stack starts the NAT instance
+automatically when a login creates or resumes a MicroVM. The start request is
+acknowledged as soon as EC2 accepts it; MicroVM startup overlaps NAT warm-up.
+The login path does not wait for NAT readiness, so internet-dependent setup can
+fail temporarily while the instance starts and forwarding becomes available.
+The controller runs with concurrency one, so a scheduled idle check cannot
+race a login start. EventBridge invokes reconciliation once per minute. It
+checks the live private route before acting and does not change NAT modes or
+routes; gateway routing does not trigger EC2 start or stop calls.
+
+The selected `NatMode` and the live private route must agree before relying on
+these mode descriptions. Automation gates on the actual `0.0.0.0/0` route
+target. If the stack reports one mode while that route targets another NAT
+path, reconcile the stack before removing the gateway or relying on automatic
+instance lifecycle control.
+
+The controller keeps the instance running while any tracked VM is running,
+starting, unknown, or temporarily unavailable. It stops the instance only
+when every tracked VM is suspended or terminated. A five-minute grace period
+after a start absorbs eventual consistency in MicroVM state. The existing
+7,200-second MicroVM idle policy remains unchanged.
+
+For manual operation or recovery, start the instance and wait for both the
 `running` state and EC2 system and instance status checks to be `ok`:
 
 ```bash
@@ -146,12 +168,11 @@ route back, then `gateway` to remove the instance. Never skip a mode.
 
 ## Cost and monitoring assumptions
 
-Approximate us-east-1 monthly cost is $10.35 when the `t4g.small` runs 12 hours
-per day, or $16.46 continuously, compared with roughly $36 for the always-on
-managed gateway and EIP. The increase over `t4g.nano` is about $4.60 at 12 hours
-per day or $9.20 continuously; these are compute-only differences. Estimates
-exclude data transfer, NAT processing, CloudWatch monitoring, taxes, and price
-changes. A stopped instance still incurs Elastic IP and EBS storage charges.
+Approximate us-east-1 monthly cost is $5.75 when the `t4g.nano` runs 12 hours
+per day, or $7.26 continuously, compared with roughly $36 for the always-on
+managed gateway and EIP. Estimates exclude data transfer, NAT processing,
+CloudWatch monitoring, taxes, and price changes. A stopped instance still
+incurs Elastic IP and EBS storage charges.
 
 The instance uses SSM and IMDSv2, has no SSH key or management ingress, and
 disables source/destination checks. A systemd-managed iptables service restores

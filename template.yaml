@@ -233,7 +233,7 @@ Resources:
         Timeout: PT30M
     Properties:
       ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}}"
-      InstanceType: t4g.small
+      InstanceType: t4g.nano
       IamInstanceProfile: !Ref NatInstanceProfile
       Monitoring: true
       PropagateTagsToVolumeOnCreation: true
@@ -972,6 +972,7 @@ Resources:
           NETWORK_CONNECTOR_ARN: !GetAtt VpcEgressConnector.Arn
           S3_FILES_FS_ID: !GetAtt S3FilesFileSystem.FileSystemId
           WORKSPACE_BUCKET_ARN: !GetAtt WorkspaceBucket.Arn
+          NAT_CONTROL_FUNCTION_ARN: !If [UseNatInstance, !GetAtt NatControlFunction.Arn, ""]
       Policies:
         # SAM policy templates first:
         - SSMParameterWithSlashPrefixReadPolicy: { ParameterName: /ipad-claude/* }
@@ -994,6 +995,13 @@ Resources:
               Effect: Allow
               Action: iam:PassRole
               Resource: !GetAtt MicroVmExecutionRole.Arn
+            - !If
+              - UseNatInstance
+              - Sid: InvokeNatController
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt NatControlFunction.Arn
+              - !Ref AWS::NoValue
       Events:
         GetToken:
           Type: Api
@@ -1007,6 +1015,47 @@ Resources:
             RestApiId: !Ref TokenApi
             Path: /token
             Method: delete
+
+  NatControlFunction:
+    Type: AWS::Serverless::Function
+    Condition: UseNatInstance
+    Properties:
+      FunctionName: ipad-claude-nat-control
+      CodeUri: functions/nat-control/
+      Handler: index.handler
+      ReservedConcurrentExecutions: 1
+      Timeout: 30
+      Environment:
+        Variables:
+          NAT_INSTANCE_ID: !Ref NatInstance
+          PRIVATE_ROUTE_TABLE_ID: !Ref PrivateRouteTable
+          STARTED_AT_PARAMETER: /ipad-claude/nat/started-at
+      Policies:
+        - Statement:
+            - Sid: NatInstanceLifecycle
+              Effect: Allow
+              Action: [ec2:StartInstances, ec2:StopInstances]
+              Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${NatInstance}"
+            - Sid: NatInstanceState
+              Effect: Allow
+              Action: [ec2:DescribeInstances, ec2:DescribeRouteTables]
+              Resource: "*"
+              Condition: { StringEquals: { aws:RequestedRegion: !Ref AWS::Region } }
+            - Sid: NatStartMarker
+              Effect: Allow
+              Action: [ssm:GetParameter, ssm:PutParameter, ssm:GetParametersByPath]
+              Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ipad-claude/*"
+            - Sid: MicroVmState
+              Effect: Allow
+              Action: lambda:GetMicrovm
+              Resource: "*"
+              Condition: { StringEquals: { aws:RequestedRegion: !Ref AWS::Region } }
+      Events:
+        Reconcile:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Enabled: true
 
   # ── Frontend: S3 + CloudFront ─────────────────────────────────────────────────
   FrontendOac:

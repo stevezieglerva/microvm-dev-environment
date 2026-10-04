@@ -5,7 +5,7 @@
 - **Decision owner:** Steve Ziegler
 - **Issue:** [#8](https://github.com/stevezieglerva/microvm-dev-environment/issues/8)
 - **Implementation:** [PR #9](https://github.com/stevezieglerva/microvm-dev-environment/pull/9) (merged); the live private route currently targets the EC2 NAT instance, with the managed gateway retained for rollback.
-- **Sizing update:** The `t4g.nano` choice is superseded by [ADR 0002](0002-increase-nat-instance-memory.md).
+- **Sizing confirmation:** [ADR 0002](0002-increase-nat-instance-memory.md) records the deployed `t4g.nano` size and retained 1 GiB swap file.
 
 ## Context
 
