@@ -1,8 +1,11 @@
 const { SSMClient, GetParameterCommand, PutParameterCommand } = require('@aws-sdk/client-ssm');
+const { LambdaClient, InvokeCommand } = require('@aws-sdk/client-lambda');
+const { isRetryable, delayMs } = require('./nat-retry');
 const https = require('https');
 const crypto = require('crypto');
 
 const ssm = new SSMClient({ region: process.env.AWS_REGION });
+const lambda = new LambdaClient({ region: process.env.AWS_REGION, maxAttempts: 3 });
 
 async function getParam(name, decrypt = false) {
   const r = await ssm.send(new GetParameterCommand({ Name: name, WithDecryption: decrypt }));
@@ -11,6 +14,43 @@ async function getParam(name, decrypt = false) {
 
 async function putParam(name, value) {
   await ssm.send(new PutParameterCommand({ Name: name, Value: value, Type: 'String', Overwrite: true }));
+}
+
+async function ensureNatRunning() {
+  if (!process.env.NAT_CONTROL_FUNCTION_ARN) return;
+  let lastError;
+  for (let attempt = 0; attempt < 7; attempt += 1) {
+    try {
+      const result = await lambda.send(new InvokeCommand({
+        FunctionName: process.env.NAT_CONTROL_FUNCTION_ARN,
+        InvocationType: 'RequestResponse',
+        Payload: Buffer.from(JSON.stringify({ action: 'ensure-running' })),
+      }));
+      if (result.FunctionError) {
+        const error = new Error(`NAT controller failed: ${result.FunctionError}`);
+        error.retryable = true;
+        throw error;
+      }
+      const response = JSON.parse(Buffer.from(result.Payload || '{}').toString());
+      if (response.status === 'acknowledged' || response.status === 'unmanaged') return;
+      if (response.status === 'retryable') {
+        const error = new Error(response.message);
+        error.retryable = true;
+        throw error;
+      }
+      const error = new Error(response.message || 'NAT controller rejected the request');
+      error.retryable = false;
+      throw error;
+    } catch (error) {
+      lastError = error;
+      if (error.retryable === false) throw error;
+      if (!isRetryable(error)) throw error;
+      if (attempt < 6) await new Promise(resolve => setTimeout(resolve, delayMs(attempt)));
+    }
+  }
+  const error = new Error(`NAT start could not be acknowledged: ${lastError.message}`);
+  error.natStartFailure = true;
+  throw error;
 }
 
 function sigv4Request(method, hostname, path, body, service = 'lambda') {
@@ -252,6 +292,7 @@ exports.handler = async (event) => {
         // Happy path
       } else if (state === 'SUSPENDED') {
         console.log('Resuming suspended MVM…');
+        await ensureNatRunning();
         vmState = 'resuming';
         await resumeMvm(mvmId);
         // Give it a moment to start accepting connections
@@ -265,6 +306,7 @@ exports.handler = async (event) => {
 
     if (!mvmId) {
       console.log(`Launching new MicroVM for user ${sub}…`);
+      await ensureNatRunning();
       vmState = 'starting';
       // Find-or-create this user's home (access point scoped to /users/<sub>).
       const accessPointId = await ensureUserAccessPoint(sub);
@@ -292,7 +334,7 @@ exports.handler = async (event) => {
   } catch (err) {
     console.error('Token vend error:', err.message);
     return {
-      statusCode: 500,
+      statusCode: err.natStartFailure ? 503 : 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({ error: err.message }),
     };

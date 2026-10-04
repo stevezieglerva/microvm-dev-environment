@@ -104,7 +104,20 @@ Only this mode deletes the gateway resources. The instance EIP and encrypted
 
 ## Daily operation
 
-Start the instance before starting MicroVM work, then wait for both the
+In `instance-active` and `instance-only`, the stack starts the NAT instance
+automatically when a login creates or resumes a MicroVM. The start request is
+acknowledged as soon as EC2 accepts it; MicroVM startup overlaps NAT warm-up.
+The controller runs with concurrency one, so a scheduled idle check cannot
+race a login start. It checks the private route before acting, leaving gateway
+modes unchanged.
+
+The controller keeps the instance running while any tracked VM is running,
+starting, unknown, or temporarily unavailable. It stops the instance only
+when every tracked VM is suspended or terminated. A five-minute grace period
+after a start absorbs eventual consistency in MicroVM state. The existing
+7,200-second MicroVM idle policy remains unchanged.
+
+For manual operation or recovery, start the instance and wait for both the
 `running` state and EC2 system and instance status checks to be `ok`:
 
 ```bash
