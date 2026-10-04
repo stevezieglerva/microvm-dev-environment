@@ -51,8 +51,8 @@ and NAT Gateway migration modes from ADR 0001 unchanged.
   unavailable whenever the NAT instance is stopped.
 - Updating the live stack to this size remains a separate deployment; schedule
   it when a brief interruption to private egress is acceptable.
-- The NAT Gateway remains available for rollback until the separate egress
-  soak and validation are complete.
+- The NAT Gateway remains available for rollback until egress validation is
+  complete and an operator selects `instance-only`.
 
 ## References
 

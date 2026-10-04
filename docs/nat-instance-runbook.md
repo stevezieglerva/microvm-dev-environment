@@ -87,15 +87,10 @@ this template; the associated role is tagged.
    subnets and from a real MicroVM connector. Capture successful results for
    each subnet.
 
-Keep `instance-active` for a 24–48 hour soak. Monitor the
-`ipad-claude-nat-instance` dashboard and its status, CPU credit, memory, and
-conntrack alarms during normal MicroVM use. Repeat the external HTTPS, AWS,
-Bedrock, package/Git, AgentCore web search, and S3 Files checks from both
-private subnets and the real MicroVM connector during the soak and before
-selecting `instance-only`.
+Monitor the `ipad-claude-nat-instance` dashboard and its status, CPU credit,
+memory, and conntrack alarms while validating normal MicroVM use.
 
-6. After the soak and a final egress check, remove the managed gateway and its
-   EIP:
+6. After the egress checks pass, remove the managed gateway and its EIP:
 
    ```bash
    ./scripts/deploy.sh --nat-mode instance-only --skip-mvm
