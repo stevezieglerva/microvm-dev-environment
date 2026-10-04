@@ -22,11 +22,12 @@ Description: >
 # ─────────────────────────────────────────────────────────────────────────────
 
 Parameters:
-  # Two categories only: values genuinely unknowable until deploy time
+  # Deploy-time values include values genuinely unknowable until deploy time
   # (MicrovmCodeUri, WebSearchGatewayUrl — deploy.sh computes/discovers these
-  # itself every run), and personalization knobs meant to be set once via
-  # `sam deploy --guided` or samconfig.toml's parameter_overrides, not by
-  # deploy.sh (LoginEmail). Everything else that's a fixed, non-personal
+  # itself every run), the NAT rollout mode, and personalization knobs meant
+  # to be set once via `sam deploy --guided` or samconfig.toml's
+  # parameter_overrides, not by deploy.sh (LoginEmail). Everything else that's
+  # a fixed, non-personal
   # choice (image name, memory tier, capabilities, base image version) is a
   # literal directly on the MicrovmImage resource below — not a Parameter.
   LoginEmail:
@@ -50,6 +51,14 @@ Parameters:
     Type: String
     Default: ""
     Description: AgentCore web-search MCP endpoint (created out-of-band by deploy.sh; see WebSearchGatewayRole below).
+  NatMode:
+    Type: String
+    Default: gateway
+    AllowedValues: [gateway, instance-standby, instance-active, instance-only]
+    Description: >-
+      NAT rollout mode. Use instance-standby to provision the NAT instance,
+      instance-active to move private routes to it, and instance-only to remove
+      the managed NAT Gateway after the soak period.
 
 Globals:
   Function:
@@ -57,6 +66,13 @@ Globals:
     Architectures: [arm64]
     Timeout: 30
     MemorySize: 256
+
+Conditions:
+  UseNatGateway: !Or
+    - !Equals [!Ref NatMode, gateway]
+    - !Equals [!Ref NatMode, instance-standby]
+    - !Equals [!Ref NatMode, instance-active]
+  UseNatInstance: !Not [!Equals [!Ref NatMode, gateway]]
 
 Resources:
 
@@ -131,13 +147,284 @@ Resources:
 
   NatEip:
     Type: AWS::EC2::EIP
-    Properties: { Domain: vpc }
+    Condition: UseNatGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-gateway-eip }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
 
   NatGateway:
     Type: AWS::EC2::NatGateway
+    Condition: UseNatGateway
     Properties:
       AllocationId: !GetAtt NatEip.AllocationId
       SubnetId: !Ref PublicSubnet1
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-gateway }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
+
+  NatInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: UseNatInstance
+    Properties:
+      GroupDescription: Allow only VPC traffic through the NAT instance
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 10.0.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-instance-sg }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
+
+  NatInstanceRole:
+    Type: AWS::IAM::Role
+    Condition: UseNatInstance
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-instance-role }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
+
+  NatInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: UseNatInstance
+    Properties:
+      Roles: [!Ref NatInstanceRole]
+
+  NatInstance:
+    Type: AWS::EC2::Instance
+    Condition: UseNatInstance
+    DependsOn: IgwAttachment
+    Properties:
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}}"
+      InstanceType: t4g.nano
+      IamInstanceProfile: !Ref NatInstanceProfile
+      Monitoring: true
+      SourceDestCheck: false
+      CreditSpecification:
+        CPUCredits: standard
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref PublicSubnet1
+          GroupSet: [!Ref NatInstanceSecurityGroup]
+          AssociatePublicIpAddress: false
+          DeleteOnTermination: true
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-instance }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          dnf install -y amazon-cloudwatch-agent awscli-2 conntrack-tools iptables-services
+
+          cat >/etc/sysctl.d/99-nat-instance.conf <<'SYSCTL'
+          net.ipv4.ip_forward = 1
+          net.ipv4.conf.all.send_redirects = 0
+          net.ipv4.conf.default.send_redirects = 0
+          net.ipv4.conf.all.rp_filter = 0
+          net.ipv4.conf.default.rp_filter = 0
+          net.netfilter.nf_conntrack_max = 131072
+          SYSCTL
+          sysctl --system
+
+          # Forward only VPC-originated traffic and allow established replies.
+          iptables -F FORWARD
+          iptables -t nat -F POSTROUTING
+          iptables -P FORWARD DROP
+          iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -d 10.0.0.0/16 -j ACCEPT
+          iptables -A FORWARD -s 10.0.0.0/16 -j ACCEPT
+          iptables -t nat -A POSTROUTING -s 10.0.0.0/16 ! -d 10.0.0.0/16 -o eth0 -j MASQUERADE
+          iptables-save >/etc/sysconfig/iptables
+          systemctl enable iptables
+
+          mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+          cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'CWAGENT'
+          {
+            "agent": {"metrics_collection_interval": 60},
+            "metrics": {
+              "namespace": "AiVm/NatInstance",
+              "append_dimensions": {"InstanceId": "${!aws:InstanceId}"},
+              "metrics_collected": {
+                "mem": {
+                  "measurement": ["mem_available", "mem_used_percent"],
+                  "metrics_collection_interval": 60
+                }
+              }
+            }
+          }
+          CWAGENT
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+            -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+
+          cat >/usr/local/sbin/publish-conntrack-metrics <<'METRICS'
+          #!/bin/bash
+          set -euo pipefail
+          TOKEN=$(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600')
+          INSTANCE_ID=$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+          REGION=$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+          COUNT=$(conntrack -C 2>/dev/null || echo 0)
+          LIMIT=$(cat /proc/sys/net/netfilter/nf_conntrack_max)
+          UTILIZATION=$(awk -v count="$COUNT" -v limit="$LIMIT" 'BEGIN { if (limit == 0) print 0; else printf "%.2f", count * 100 / limit }')
+          aws cloudwatch put-metric-data --region "$REGION" --namespace AiVm/NatInstance \
+            --metric-data "MetricName=ConntrackCount,Dimensions=[{Name=InstanceId,Value=$INSTANCE_ID}],Value=$COUNT,Unit=Count" \
+            "MetricName=ConntrackLimit,Dimensions=[{Name=InstanceId,Value=$INSTANCE_ID}],Value=$LIMIT,Unit=Count" \
+            "MetricName=ConntrackUtilization,Dimensions=[{Name=InstanceId,Value=$INSTANCE_ID}],Value=$UTILIZATION,Unit=Percent"
+          METRICS
+          chmod 0755 /usr/local/sbin/publish-conntrack-metrics
+
+          cat >/etc/systemd/system/nat-conntrack.service <<'SERVICE'
+          [Unit]
+          Description=Publish NAT conntrack metrics
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/publish-conntrack-metrics
+          SERVICE
+          cat >/etc/systemd/system/nat-conntrack.timer <<'TIMER'
+          [Unit]
+          Description=Publish NAT conntrack metrics every minute
+
+          [Timer]
+          OnBootSec=1min
+          OnUnitActiveSec=1min
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+          TIMER
+          systemctl daemon-reload
+          systemctl enable --now nat-conntrack.timer
+
+  NatInstanceEip:
+    Type: AWS::EC2::EIP
+    Condition: UseNatInstance
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref NatInstance
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-instance-eip }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
+
+  NatStatusCheckAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: UseNatInstance
+    Properties:
+      AlarmDescription: NAT instance EC2 or system status check failed.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions: [{ Name: InstanceId, Value: !Ref NatInstance }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: breaching
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-status-alarm }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
+
+  NatCpuCreditAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: UseNatInstance
+    Properties:
+      AlarmDescription: NAT instance CPU credit balance is low.
+      Namespace: AWS/EC2
+      MetricName: CPUCreditBalance
+      Dimensions: [{ Name: InstanceId, Value: !Ref NatInstance }]
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-cpu-credit-alarm }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
+
+  NatMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: UseNatInstance
+    Properties:
+      AlarmDescription: NAT instance available memory is low.
+      Namespace: AiVm/NatInstance
+      MetricName: mem_available
+      Dimensions: [{ Name: InstanceId, Value: !Ref NatInstance }]
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 104857600
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-memory-alarm }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
+
+  NatConntrackAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: UseNatInstance
+    Properties:
+      AlarmDescription: NAT instance conntrack utilization is high.
+      Namespace: AiVm/NatInstance
+      MetricName: ConntrackUtilization
+      Dimensions: [{ Name: InstanceId, Value: !Ref NatInstance }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-conntrack-alarm }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
+
+  NatDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Condition: UseNatInstance
+    Properties:
+      DashboardName: ipad-claude-nat-instance
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {"type":"metric","width":12,"height":6,"properties":{"title":"NAT network throughput","view":"timeSeries","region":"${AWS::Region}","period":300,"stat":"Average","metrics":[["AWS/EC2","NetworkIn","InstanceId","${NatInstance}"],[".","NetworkOut","InstanceId","${NatInstance}"]]}}
+          ]
+        }
 
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
@@ -149,7 +436,8 @@ Resources:
     Properties:
       RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
+      NatGatewayId: !If [UseNatInstance, !Ref AWS::NoValue, !Ref NatGateway]
+      InstanceId: !If [UseNatInstance, !Ref NatInstance, !Ref AWS::NoValue]
 
   PrivateSubnet1RouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -812,3 +1100,14 @@ Outputs:
   MicrovmImageArn:
     Description: ARN of the MicroVM image (created/updated as part of this stack).
     Value: !GetAtt MicrovmImage.ImageArn
+  SelectedNatMode:
+    Description: NAT mode selected for this stack deployment.
+    Value: !Ref NatMode
+  NatInstanceId:
+    Condition: UseNatInstance
+    Description: EC2 NAT instance ID (available in instance modes).
+    Value: !Ref NatInstance
+  NatInstancePublicIp:
+    Condition: UseNatInstance
+    Description: Elastic IP assigned to the EC2 NAT instance.
+    Value: !Ref NatInstanceEip
