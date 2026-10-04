@@ -104,9 +104,18 @@ Only this mode deletes the gateway resources. The instance EIP and encrypted
 In `instance-active` and `instance-only`, the stack starts the NAT instance
 automatically when a login creates or resumes a MicroVM. The start request is
 acknowledged as soon as EC2 accepts it; MicroVM startup overlaps NAT warm-up.
+The login path does not wait for NAT readiness, so internet-dependent setup can
+fail temporarily while the instance starts and forwarding becomes available.
 The controller runs with concurrency one, so a scheduled idle check cannot
-race a login start. It checks the private route before acting, leaving gateway
-modes unchanged.
+race a login start. EventBridge invokes reconciliation once per minute. It
+checks the live private route before acting and does not change NAT modes or
+routes; gateway routing does not trigger EC2 start or stop calls.
+
+The selected `NatMode` and the live private route must agree before relying on
+these mode descriptions. Automation gates on the actual `0.0.0.0/0` route
+target. If the stack reports one mode while that route targets another NAT
+path, reconcile the stack before removing the gateway or relying on automatic
+instance lifecycle control.
 
 The controller keeps the instance running while any tracked VM is running,
 starting, unknown, or temporarily unavailable. It stops the instance only
