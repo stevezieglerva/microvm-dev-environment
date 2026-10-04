@@ -183,6 +183,18 @@ Resources:
         - { Key: Type, Value: ai-vm }
         - { Key: Created, Value: "2026-10-03" }
 
+  NatInstanceNetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Condition: UseNatInstance
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      GroupSet: [!Ref NatInstanceSecurityGroup]
+      SourceDestCheck: false
+      Tags:
+        - { Key: Name, Value: ipad-claude-nat-instance-eni }
+        - { Key: Type, Value: ai-vm }
+        - { Key: Created, Value: "2026-10-03" }
+
   NatInstanceRole:
     Type: AWS::IAM::Role
     Condition: UseNatInstance
@@ -210,13 +222,20 @@ Resources:
   NatInstance:
     Type: AWS::EC2::Instance
     Condition: UseNatInstance
-    DependsOn: IgwAttachment
+    DependsOn:
+      - IgwAttachment
+      - PublicRoute
+      - PublicSubnet1RouteAssoc
+      - NatInstanceEipAssociation
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT30M
     Properties:
       ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}}"
       InstanceType: t4g.nano
       IamInstanceProfile: !Ref NatInstanceProfile
       Monitoring: true
-      SourceDestCheck: false
       PropagateTagsToVolumeOnCreation: true
       CreditSpecification:
         CPUCredits: standard
@@ -226,10 +245,7 @@ Resources:
         HttpPutResponseHopLimit: 1
       NetworkInterfaces:
         - DeviceIndex: 0
-          SubnetId: !Ref PublicSubnet1
-          GroupSet: [!Ref NatInstanceSecurityGroup]
-          AssociatePublicIpAddress: false
-          DeleteOnTermination: true
+          NetworkInterfaceId: !Ref NatInstanceNetworkInterface
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
@@ -246,7 +262,16 @@ Resources:
           #!/bin/bash
           set -euxo pipefail
 
-          dnf install -y amazon-cloudwatch-agent awscli-2 conntrack-tools iptables-services
+          dnf install -y amazon-cloudwatch-agent aws-cfn-bootstrap awscli-2 conntrack-tools iptables-services
+
+          signal_bootstrap_failure() {
+            local exit_code=$?
+            if [ "$exit_code" -ne 0 ]; then
+              /opt/aws/bin/cfn-signal --exit-code "$exit_code" --stack ${AWS::StackName} \
+                --resource NatInstance --region ${AWS::Region} || true
+            fi
+          }
+          trap signal_bootstrap_failure EXIT
 
           cat >/etc/sysctl.d/99-nat-instance.conf <<'SYSCTL'
           net.ipv4.ip_forward = 1
@@ -257,6 +282,13 @@ Resources:
           net.netfilter.nf_conntrack_max = 131072
           SYSCTL
           sysctl --system
+
+          # Accept only loopback and established host traffic (SSM uses outbound TLS).
+          # Transit traffic is handled separately by the FORWARD chain below.
+          iptables -F INPUT
+          iptables -P INPUT DROP
+          iptables -A INPUT -i lo -j ACCEPT
+          iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
           # Forward only VPC-originated traffic and allow established replies.
           iptables -F FORWARD
@@ -329,17 +361,30 @@ Resources:
           TIMER
           systemctl daemon-reload
           systemctl enable --now nat-conntrack.timer
+          systemctl enable --now amazon-ssm-agent
+          systemctl is-active --quiet amazon-cloudwatch-agent
+          systemctl is-active --quiet nat-conntrack.timer
+          systemctl is-active --quiet amazon-ssm-agent
+          /opt/aws/bin/cfn-signal --exit-code 0 --stack ${AWS::StackName} \
+            --resource NatInstance --region ${AWS::Region}
+          trap - EXIT
 
   NatInstanceEip:
     Type: AWS::EC2::EIP
     Condition: UseNatInstance
     Properties:
       Domain: vpc
-      InstanceId: !Ref NatInstance
       Tags:
         - { Key: Name, Value: ipad-claude-nat-instance-eip }
         - { Key: Type, Value: ai-vm }
         - { Key: Created, Value: "2026-10-03" }
+
+  NatInstanceEipAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Condition: UseNatInstance
+    Properties:
+      AllocationId: !GetAtt NatInstanceEip.AllocationId
+      NetworkInterfaceId: !Ref NatInstanceNetworkInterface
 
   NatStatusCheckAlarm:
     Type: AWS::CloudWatch::Alarm

@@ -34,6 +34,11 @@ switching to `instance-active`.
    ./scripts/deploy.sh --nat-mode instance-standby --skip-mvm
    ```
 
+CloudFormation associates the instance EIP with its pre-created network
+interface before launching the instance. The stack waits for UserData to
+install and start NAT forwarding, monitoring, and SSM before it reports the
+instance ready.
+
 2. Confirm the instance output and wait for it to become ready:
 
    ```bash
@@ -45,17 +50,27 @@ switching to `instance-active`.
      --include-all-instances --output table
    ```
 
-3. Use SSM to verify the bootstrap survived and the instance has no SSH
-   requirement:
+3. Start an SSM session:
 
    ```bash
    aws ssm start-session --target "$INSTANCE_ID"
+   ```
+
+   At the remote shell prompt, verify forwarding, firewall rules, and services:
+
+   ```bash
    sysctl net.ipv4.ip_forward
-   systemctl is-enabled iptables nat-conntrack.timer
-   systemctl is-active amazon-cloudwatch-agent nat-conntrack.timer
+   systemctl is-enabled iptables nat-conntrack.timer amazon-ssm-agent
+   systemctl is-active amazon-cloudwatch-agent nat-conntrack.timer amazon-ssm-agent
+   iptables -S INPUT
    iptables -S FORWARD
    iptables -t nat -S POSTROUTING
    ```
+
+The host firewall drops new inbound connections, including SSH. CloudFormation
+does not expose a `Tags` property for `AWS::IAM::InstanceProfile`, so the
+instance profile cannot receive the `Name`, `Type`, and `Created` tags through
+this template; the associated role is tagged.
 
 4. Switch private egress to the instance while retaining the gateway for
    rollback:
