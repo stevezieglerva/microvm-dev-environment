@@ -15,6 +15,7 @@
 - Factory done status: `Done`
 - Factory priority label: `priority/P1`
 - Factory ready label: `ready-for-agent`
+- Factory area label: `area:general`
 - Factory epic label: `epic`
 - Factory native issue types: `false`
 - Factory status field: `Status`
