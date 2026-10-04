@@ -1,0 +1,194 @@
+[1;36m▶ Resolving AWS identity (from your default profile/env — see the header comment)...[0m
+[1;32m✓ Authenticated as arn:aws:iam::112280397275:user/ziegler-aws (account 112280397275) — Ctrl+C now if that's wrong[0m
+[1;36m▶ NAT mode: gateway -> gateway[0m
+[1;36m▶ Ensuring AgentCore web-search gateway...[0m
+[1;32m✓ Web-search gateway exists: ipadclaudewebsearch-tc7vqgjvqp[0m
+[1;32m✓ Web-search MCP endpoint: https://ipadclaudewebsearch-tc7vqgjvqp.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp[0m
+[1;36m▶ Packaging MicroVM source...[0m
+Completed 54.4 KiB/54.4 KiB (225.1 KiB/s) with 1 file(s) remainingupload: ../../../../../../tmp/remote-dev-microvm.zip to s3://ipad-claude-artifactbucket-6a1wsmfsvzwc/microvm/remote-dev-microvm-23a19891c4d4a62b.zip
+[1;32m✓ Source uploaded to s3://ipad-claude-artifactbucket-6a1wsmfsvzwc/microvm/remote-dev-microvm-23a19891c4d4a62b.zip[0m
+[1;36m▶ Building SAM application...[0m
+
+Build Succeeded
+
+Built Artifacts  : .aws-sam/build
+Built Template   : .aws-sam/build/template.yaml
+
+Commands you can use next
+=========================
+[*] Validate SAM template: sam validate
+[*] Invoke Function: sam local invoke
+[*] Test Function in the Cloud: sam sync --stack-name {{stack-name}} --watch
+[*] Deploy: sam deploy --guided
+[1;36m▶ Deploying SAM stack (this includes the MicroVM image build if microvm/ changed — CloudFormation waits for it, ~5-10 min on a real change)...[0m
+
+	Managed S3 bucket: aws-sam-cli-managed-default-samclisourcebucket-1enti6xg9t4rt
+	Auto resolution of buckets can be turned off by setting resolve_s3=False
+	To use a specific S3 bucket, set --s3-bucket=<bucket_name>
+	Above settings can be stored in samconfig.toml
+
+	Deploying with following values
+	===============================
+	Stack name                   : ipad-claude
+	Region                       : us-east-1
+	Confirm changeset            : False
+	Disable rollback             : False
+	Deployment s3 bucket         : aws-sam-cli-managed-default-samclisourcebucket-1enti6xg9t4rt
+	Capabilities                 : ["CAPABILITY_NAMED_IAM"]
+	Parameter overrides          : {"MicrovmCodeUri": "s3://ipad-claude-artifactbucket-6a1wsmfsvzwc/microvm/remote-dev-microvm-23a19891c4d4a62b.zip", "WebSearchGatewayUrl": "https://ipadclaudewebsearch-tc7vqgjvqp.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp", "NatMode": "gateway"}
+	Signing Profiles             : {}
+
+Initiating deployment
+=====================
+
+
+
+Waiting for changeset to be created..
+
+CloudFormation stack changeset
+-------------------------------------------------------------------------------------------------
+Operation                LogicalResourceId        ResourceType             Replacement            
+-------------------------------------------------------------------------------------------------
+* Modify                 MicrovmImage             AWS::Lambda::MicrovmIm   False                  
+                                                  age                                             
+* Modify                 NatEip                   AWS::EC2::EIP            False                  
+* Modify                 NatGateway               AWS::EC2::NatGateway     Conditional            
+* Modify                 PrivateRoute             AWS::EC2::Route          False                  
+* Modify                 TokenApi                 AWS::ApiGateway::RestA   False                  
+                                                  pi                                              
+* Modify                 TokenFunction            AWS::Lambda::Function    False                  
+-------------------------------------------------------------------------------------------------
+
+
+Changeset created successfully. arn:aws:cloudformation:us-east-1:112280397275:changeSet/samcli-deploy1791118805/0d51d48d-4839-4aa0-8721-76bb425719fa
+
+
+2026-10-04 09:00:27 - Waiting for stack create/update to complete
+
+CloudFormation events from stack operations (refresh every 5.0 seconds)
+-------------------------------------------------------------------------------------------------
+ResourceStatus           ResourceType             LogicalResourceId        ResourceStatusReason   
+-------------------------------------------------------------------------------------------------
+UPDATE_IN_PROGRESS       AWS::CloudFormation::S   ipad-claude              User Initiated         
+                         tack                                                                     
+UPDATE_IN_PROGRESS       AWS::EC2::EIP            NatEip                   -                      
+UPDATE_IN_PROGRESS       AWS::Lambda::MicrovmIm   MicrovmImage             -                      
+                         age                                                                      
+UPDATE_IN_PROGRESS -     AWS::EC2::EIP            NatEip                   Eventual consistency   
+CONFIGURATION_COMPLETE                                                     check initiated        
+UPDATE_COMPLETE          AWS::EC2::EIP            NatEip                   -                      
+UPDATE_IN_PROGRESS       AWS::EC2::NatGateway     NatGateway               -                      
+UPDATE_IN_PROGRESS -     AWS::EC2::NatGateway     NatGateway               Eventual consistency   
+CONFIGURATION_COMPLETE                                                     check initiated        
+UPDATE_COMPLETE          AWS::EC2::NatGateway     NatGateway               -                      
+UPDATE_IN_PROGRESS -     AWS::Lambda::MicrovmIm   MicrovmImage             Eventual consistency   
+CONFIGURATION_COMPLETE   age                                               check initiated        
+UPDATE_COMPLETE          AWS::Lambda::MicrovmIm   MicrovmImage             -                      
+                         age                                                                      
+UPDATE_COMPLETE_CLEANU   AWS::CloudFormation::S   ipad-claude              -                      
+P_IN_PROGRESS            tack                                                                     
+UPDATE_COMPLETE          AWS::CloudFormation::S   ipad-claude              -                      
+                         tack                                                                     
+-------------------------------------------------------------------------------------------------
+
+CloudFormation outputs from deployed stack
+-------------------------------------------------------------------------------------------------
+Outputs                                                                                         
+-------------------------------------------------------------------------------------------------
+Key                 WebSearchGatewayRoleArn                                                     
+Description         IAM role used by the AgentCore web-search gateway (outbound connector       
+auth).                                                                                          
+Value               arn:aws:iam::112280397275:role/ipad-claude-websearch-gw-role                
+
+Key                 ArtifactBucketName                                                          
+Description         -                                                                           
+Value               ipad-claude-artifactbucket-6a1wsmfsvzwc                                     
+
+Key                 LoginEmail                                                                  
+Description         Configured via the LoginEmail parameter (samconfig.toml or --parameter-     
+overrides).                                                                                     
+Value               you@example.com                                                             
+
+Key                 CloudFrontDistributionId                                                    
+Description         -                                                                           
+Value               E2HVUO4VDZPE6J                                                              
+
+Key                 TokenApiUrl                                                                 
+Description         Token-vending API endpoint.                                                 
+Value               https://tngj2tcut6.execute-api.us-east-1.amazonaws.com/prod/token           
+
+Key                 SelectedNatMode                                                             
+Description         NAT mode selected for this stack deployment.                                
+Value               gateway                                                                     
+
+Key                 CreateUserCommand                                                           
+Description         Run this once to create your first login. sam deploy prints this            
+automatically ? no need for deploy.sh to reconstruct it.                                        
+Value               aws cognito-idp admin-create-user --user-pool-id us-east-1_9l2eaxdt5        
+--username you@example.com --user-attributes Name=email,Value=you@example.com                   
+Name=email_verified,Value=true --temporary-password 'ChangeMe-123!'                             
+
+Key                 FrontendUrl                                                                 
+Description         -                                                                           
+Value               https://d19c2jnoe1lbqm.cloudfront.net                                       
+
+Key                 UserPoolClientId                                                            
+Description         -                                                                           
+Value               5rjqpk1b943p5p16fs71r9oh6b                                                  
+
+Key                 ExecutionRoleArn                                                            
+Description         -                                                                           
+Value               arn:aws:iam::112280397275:role/ipad-claude-MicroVmExecutionRole-            
+EvAjDMCQWQTm                                                                                    
+
+Key                 UserPoolId                                                                  
+Description         -                                                                           
+Value               us-east-1_9l2eaxdt5                                                         
+
+Key                 NetworkConnectorArn                                                         
+Description         -                                                                           
+Value               arn:aws:lambda:us-east-1:112280397275:network-                              
+connector:nc-5d793d7b-f4df-4412-8e95-021d3ca154c1                                               
+
+Key                 FrontendBucketName                                                          
+Description         -                                                                           
+Value               ipad-claude-frontendbucket-gbqrkaxupchq                                     
+
+Key                 BuildRoleArn                                                                
+Description         -                                                                           
+Value               arn:aws:iam::112280397275:role/ipad-claude-MicroVmBuildRole-uPXXM2WI0fOh    
+
+Key                 WorkspaceBucketName                                                         
+Description         -                                                                           
+Value               ipad-claude-workspacebucket-4o5aad97kf7g                                    
+
+Key                 S3FilesFileSystemId                                                         
+Description         -                                                                           
+Value               fs-04a1631a6430cf223                                                        
+
+Key                 MicrovmImageArn                                                             
+Description         ARN of the MicroVM image (created/updated as part of this stack).           
+Value               arn:aws:lambda:us-east-1:112280397275:microvm-image:remote-dev              
+-------------------------------------------------------------------------------------------------
+
+
+Successfully created/updated stack - ipad-claude in us-east-1
+
+[1;32m✓ SAM stack deployed[0m
+[1;36m▶ Injecting runtime config into frontend...[0m
+[1;36m▶ Syncing frontend to S3 (ipad-claude-frontendbucket-gbqrkaxupchq)...[0m
+Completed 50.3 KiB/50.3 KiB (187.1 KiB/s) with 1 file(s) remainingupload: ../../../../../../tmp/ipad-claude-index.html to s3://ipad-claude-frontendbucket-gbqrkaxupchq/index.html
+[1;32m✓ Frontend synced and CDN invalidated[0m
+[1;36m▶ Creating throwaway access point for smoke test...[0m
+[1;36m▶ Launching smoke-test MicroVM...[0m
+[1;32m✓ Smoke-test MicroVM launched: microvm-63c78513-cb47-341c-a470-70d9ec875708[0m
+[1;32m✓ Endpoint: https://0ad08382-c5e6-ae9e-8da8-761c47a81352.lambda-microvm.us-east-1.on.aws[0m
+[1;36m▶ Smoke-testing ttyd (port 8080)...[0m
+[1;32m✓ ttyd responding (HTTP 200)[0m
+[1;36m▶ Tearing down smoke-test VM...[0m
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Remote Developer (rDev) — Deployed Successfully
+  Smoke test: smoke-tested + torn down
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+

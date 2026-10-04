@@ -4,7 +4,8 @@
 - **Date:** 2026-10-04
 - **Decision owner:** Steve Ziegler
 - **Issue:** [#8](https://github.com/stevezieglerva/microvm-dev-environment/issues/8)
-- **Implementation:** [PR #9](https://github.com/stevezieglerva/microvm-dev-environment/pull/9) (open; no live AWS migration has been performed)
+- **Implementation:** [PR #9](https://github.com/stevezieglerva/microvm-dev-environment/pull/9) (merged); the live private route currently targets the EC2 NAT instance, with the managed gateway retained for rollback.
+- **Sizing update:** The `t4g.nano` choice is superseded by [ADR 0002](0002-increase-nat-instance-memory.md).
 
 ## Context
 
@@ -50,8 +51,8 @@ memory, and conntrack use.
 
 Roll out through four adjacent modes: `gateway`, `instance-standby`,
 `instance-active`, and `instance-only`. Keep the gateway until the instance
-passes egress checks and a 24–48 hour soak. Remove the gateway only when an
-operator selects `instance-only`. Keep start and stop manual; do not add
+passes egress checks. Remove the gateway only when an operator selects
+`instance-only`. Keep start and stop manual; do not add
 scheduling or session-aware shutdown in this decision.
 
 ## Consequences
@@ -65,7 +66,7 @@ scheduling or session-aware shutdown in this decision.
 - One instance remains a single point of failure and a cross-AZ dependency for
   the second private subnet; this is acceptable for the current environment.
 - The operator must start the instance and wait for EC2 status checks before
-  MicroVM work. The gateway remains available for rollback during the soak.
+  MicroVM work. The gateway remains available for rollback until `instance-only`.
 - The operator owns AL2023 updates and NAT host maintenance.
 
 ## References

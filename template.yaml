@@ -58,7 +58,7 @@ Parameters:
     Description: >-
       NAT rollout mode. Use instance-standby to provision the NAT instance,
       instance-active to move private routes to it, and instance-only to remove
-      the managed NAT Gateway after the soak period.
+      the managed NAT Gateway after egress validation.
 
 Globals:
   Function:
@@ -233,7 +233,7 @@ Resources:
         Timeout: PT30M
     Properties:
       ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}}"
-      InstanceType: t4g.nano
+      InstanceType: t4g.small
       IamInstanceProfile: !Ref NatInstanceProfile
       Monitoring: true
       PropagateTagsToVolumeOnCreation: true
