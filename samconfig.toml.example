@@ -21,6 +21,3 @@ tags = "Type=\"ai-vm\""
 # own; CloudFormation retains it on every later `./scripts/deploy.sh` run —
 # deploy.sh never reads or passes this itself, sam does.
 # parameter_overrides = "LoginEmail=\"you@example.com\""
-# NAT mode is managed safely by deploy.sh. The modes are gateway,
-# instance-standby, instance-active, and instance-only. Use
-# ./scripts/deploy.sh --nat-mode <mode>; see docs/nat-instance-runbook.md.

@@ -4,7 +4,7 @@
 - **Date:** 2026-10-04
 - **Decision owner:** Steve Ziegler
 - **Issue:** [#8](https://github.com/stevezieglerva/microvm-dev-environment/issues/8)
-- **Implementation:** [PR #9](https://github.com/stevezieglerva/microvm-dev-environment/pull/9) (merged); the live private route currently targets the EC2 NAT instance, with the managed gateway retained for rollback.
+- **Implementation:** [PR #9](https://github.com/stevezieglerva/microvm-dev-environment/pull/9) (merged); the unused managed gateway was removed in the 2026-10-04 stack update recorded in [ADR 0003](0003-remove-managed-nat-gateway.md). The live route targets the EC2 NAT instance.
 - **Sizing confirmation:** [ADR 0002](0002-increase-nat-instance-memory.md) records the deployed `t4g.nano` size and retained 1 GiB swap file.
 
 ## Context
@@ -49,11 +49,10 @@ credits, and SSM-only administration. Persist forwarding and firewall rules,
 disable source/destination checks, and monitor status, CPU credit, throughput,
 memory, and conntrack use.
 
-Roll out through four adjacent modes: `gateway`, `instance-standby`,
-`instance-active`, and `instance-only`. Keep the gateway until the instance
-passes egress checks. Remove the gateway only when an operator selects
-`instance-only`. Keep start and stop manual; do not add
-scheduling or session-aware shutdown in this decision.
+The initial rollout used four adjacent modes: `gateway`, `instance-standby`,
+`instance-active`, and `instance-only`. After egress validation, the staged
+gateway fallback was retired in ADR 0003. NAT instance start and stop behavior
+was later automated as recorded in PR #11.
 
 ## Consequences
 
@@ -65,8 +64,9 @@ scheduling or session-aware shutdown in this decision.
   stopped. Stopping it removes internet egress for both private subnets.
 - One instance remains a single point of failure and a cross-AZ dependency for
   the second private subnet; this is acceptable for the current environment.
-- The operator must start the instance and wait for EC2 status checks before
-  MicroVM work. The gateway remains available for rollback until `instance-only`.
+- At the initial rollout, the operator started the instance and waited for EC2
+  status checks before MicroVM work. Later lifecycle automation and gateway
+  removal are recorded in PR #11 and ADR 0003.
 - The operator owns AL2023 updates and NAT host maintenance.
 
 ## References

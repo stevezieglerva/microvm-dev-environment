@@ -1,130 +1,68 @@
-# NAT instance runbook
+# EC2 NAT instance runbook
 
-The stack supports a reversible migration from the managed NAT Gateway to one
-ARM64 Amazon Linux 2023 `t4g.nano` EC2 NAT instance with 0.5 GiB of RAM and a
-1 GiB disk-backed swap file. The instance is in `PublicSubnet1`; both private
-subnets continue to use their shared route table.
-The single instance creates a cross-AZ dependency for `PrivateSubnet2`, so this
-design is intended for the single-user development environment. See
-[ADR 0001](adr/0001-use-stoppable-ec2-nat-instance.md) for the NAT design and
-[ADR 0002](adr/0002-increase-nat-instance-memory.md) for the instance size.
+The stack routes both private subnets through one ARM64 Amazon Linux 2023
+`t4g.nano` EC2 NAT instance in `PublicSubnet1`. It has 0.5 GiB of RAM, a
+1 GiB disk-backed swap file, an Elastic IP, and an encrypted 8 GiB gp3 root
+volume. The single instance creates a cross-AZ dependency for `PrivateSubnet2`,
+so this design is intended for the single-user development environment.
 
-## Modes and safe transitions
+The CloudFormation template provisions only the EC2 NAT path. The former
+managed NAT Gateway and its EIP were removed by the 2026-10-04 stack update.
+Both private subnets still route through the EC2 instance, and a post-update
+MicroVM check returned its EIP. The template no longer provides a managed
+Gateway rollback path.
 
-| Mode | Private route target | NAT Gateway and EIP | NAT instance |
-| --- | --- | --- | --- |
-| `gateway` | NAT Gateway | retained | absent |
-| `instance-standby` | NAT Gateway | retained | retained |
-| `instance-active` | NAT instance | retained | retained |
-| `instance-only` | NAT instance | removed | retained |
+The initial egress checks passed on 2026-10-04 from both private subnets and the
+real MicroVM connector. They covered public HTTPS, AWS and STS APIs, Bedrock,
+GitHub, PyPI, AgentCore web search, and the S3 Files home mount.
 
-Deploy modes one step at a time:
+See [ADR 0001](adr/0001-use-stoppable-ec2-nat-instance.md) for the NAT design
+and [ADR 0002](adr/0002-increase-nat-instance-memory.md) for the instance size.
 
-```text
-gateway <-> instance-standby <-> instance-active <-> instance-only
+## Automatic lifecycle
+
+When token vending creates or resumes a MicroVM, it requests NAT instance
+startup without waiting for the instance to become ready. Internet egress can
+be unavailable briefly while EC2 starts and forwarding becomes available.
+
+EventBridge invokes the NAT controller once per minute. It checks the live
+private route and tracked MicroVM states, keeps NAT running while any VM is
+starting, running, unknown, or temporarily unavailable, and stops the instance
+only when every tracked VM is suspended or terminated. The controller does not
+change routes. Its concurrency limit and start marker protect a concurrent
+session start from an idle stop decision.
+
+The existing 7,200-second MicroVM idle policy remains unchanged. Do not stop
+the NAT instance while a session needs internet access for package downloads,
+Git, Bedrock, AgentCore, or the S3 Files mount.
+
+## Verify egress
+
+Confirm the instance is running and both EC2 status checks are `ok`:
+
+```bash
+INSTANCE_ID=$(aws cloudformation describe-stacks --stack-name ipad-claude \
+  --query "Stacks[0].Outputs[?OutputKey=='NatInstanceId'].OutputValue" --output text)
+aws ec2 describe-instance-status --instance-ids "$INSTANCE_ID" \
+  --include-all-instances --output table
 ```
 
-`scripts/deploy.sh` reads the deployed `NatMode` when `--nat-mode` is omitted
-and passes it to every SAM deployment. It rejects skipped transitions. It also
-requires the instance to be running with both EC2 status checks `ok` before
-switching to `instance-active`.
+Confirm both private subnets use the shared route table and its default route
+targets the instance. Then check from a real MicroVM connector:
 
-## Provision and activate
+```bash
+curl -fsS --max-time 10 https://checkip.amazonaws.com
+```
 
-1. Provision the instance while gateway traffic remains unchanged:
+The result should match the NAT instance's Elastic IP. Check the required AWS,
+Bedrock, package and Git endpoints, AgentCore web search, and S3 Files mount
+from both private subnets and the real MicroVM connector after any networking
+change.
 
-   ```bash
-   ./scripts/deploy.sh --nat-mode instance-standby --skip-mvm
-   ```
+## Manual recovery
 
-CloudFormation associates the instance EIP with its pre-created network
-interface before launching the instance. The stack waits for UserData to
-install and start NAT forwarding, monitoring, and SSM before it reports the
-instance ready.
-
-2. Confirm the instance output and wait for it to become ready:
-
-   ```bash
-   INSTANCE_ID=$(aws cloudformation describe-stacks --stack-name ipad-claude \
-     --query "Stacks[0].Outputs[?OutputKey=='NatInstanceId'].OutputValue" --output text)
-   aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
-   aws ec2 wait instance-status-ok --instance-ids "$INSTANCE_ID"
-   aws ec2 describe-instance-status --instance-ids "$INSTANCE_ID" \
-     --include-all-instances --output table
-   ```
-
-3. Start an SSM session:
-
-   ```bash
-   aws ssm start-session --target "$INSTANCE_ID"
-   ```
-
-   At the remote shell prompt, verify forwarding, firewall rules, and services:
-
-   ```bash
-   sysctl net.ipv4.ip_forward
-   systemctl is-enabled iptables nat-conntrack.timer amazon-ssm-agent
-   systemctl is-active amazon-cloudwatch-agent nat-conntrack.timer amazon-ssm-agent
-   iptables -S INPUT
-   iptables -S FORWARD
-   iptables -t nat -S POSTROUTING
-   ```
-
-The host firewall drops new inbound connections, including SSH. CloudFormation
-does not expose a `Tags` property for `AWS::IAM::InstanceProfile`, so the
-instance profile cannot receive the `Name`, `Type`, and `Created` tags through
-this template; the associated role is tagged.
-
-4. Switch private egress to the instance while retaining the gateway for
-   rollback:
-
-   ```bash
-   ./scripts/deploy.sh --nat-mode instance-active --skip-mvm
-   ```
-
-5. Validate external HTTPS, AWS and Bedrock APIs, package and Git access,
-   AgentCore web search, and the S3 Files mount from workloads in both private
-   subnets and from a real MicroVM connector. Capture successful results for
-   each subnet.
-
-Monitor the `ipad-claude-nat-instance` dashboard and its status, CPU credit,
-memory, and conntrack alarms while validating normal MicroVM use.
-
-6. After the egress checks pass, remove the managed gateway and its EIP:
-
-   ```bash
-   ./scripts/deploy.sh --nat-mode instance-only --skip-mvm
-   ```
-
-Only this mode deletes the gateway resources. The instance EIP and encrypted
-8 GiB gp3 volume remain attached to the instance.
-
-## Daily operation
-
-In `instance-active` and `instance-only`, the stack starts the NAT instance
-automatically when a login creates or resumes a MicroVM. The start request is
-acknowledged as soon as EC2 accepts it; MicroVM startup overlaps NAT warm-up.
-The login path does not wait for NAT readiness, so internet-dependent setup can
-fail temporarily while the instance starts and forwarding becomes available.
-The controller runs with concurrency one, so a scheduled idle check cannot
-race a login start. EventBridge invokes reconciliation once per minute. It
-checks the live private route before acting and does not change NAT modes or
-routes; gateway routing does not trigger EC2 start or stop calls.
-
-The selected `NatMode` and the live private route must agree before relying on
-these mode descriptions. Automation gates on the actual `0.0.0.0/0` route
-target. If the stack reports one mode while that route targets another NAT
-path, reconcile the stack before removing the gateway or relying on automatic
-instance lifecycle control.
-
-The controller keeps the instance running while any tracked VM is running,
-starting, unknown, or temporarily unavailable. It stops the instance only
-when every tracked VM is suspended or terminated. A five-minute grace period
-after a start absorbs eventual consistency in MicroVM state. The existing
-7,200-second MicroVM idle policy remains unchanged.
-
-For manual operation or recovery, start the instance and wait for both the
-`running` state and EC2 system and instance status checks to be `ok`:
+For an EC2 start or health issue, inspect the instance through Systems Manager
+Session Manager. To start it manually and wait for readiness:
 
 ```bash
 aws ec2 start-instances --instance-ids "$INSTANCE_ID"
@@ -132,50 +70,31 @@ aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 aws ec2 wait instance-status-ok --instance-ids "$INSTANCE_ID"
 ```
 
-Stopping the NAT instance stops all public internet egress from both private
-subnets. Suspend or terminate every MicroVM session first, then stop it:
+Stopping the NAT instance removes internet egress from both private subnets.
+The automated controller normally handles idle stops; if manual stopping is
+needed, first confirm every MicroVM is suspended or terminated:
 
 ```bash
 aws ec2 stop-instances --instance-ids "$INSTANCE_ID"
 ```
 
-The instance's Elastic IP and 8 GiB EBS volume continue billing while it is
-stopped. The instance itself does not accrue running compute charges while
-stopped. Do not stop it while active sessions need package downloads, Git,
-Bedrock, AgentCore, or S3 Files network access.
-CloudWatch metrics stop while the instance is stopped; alarms treat missing
-data as non-breaching, so check its EC2 status directly after starting it.
+The template no longer manages a NAT Gateway fallback. Restoring that path
+requires an infrastructure change that adds a gateway and updates the route.
 
-## Rollback
-
-From `instance-active`, route traffic back to the gateway:
-
-```bash
-./scripts/deploy.sh --nat-mode instance-standby --skip-mvm
-```
-
-The instance remains available for diagnosis. To return to the original
-gateway-only deployment, use:
-
-```bash
-./scripts/deploy.sh --nat-mode gateway --skip-mvm
-```
-
-If the stack is in `instance-only`, first select `instance-active`. CloudFormation
-recreates the gateway and its EIP while private traffic remains on the healthy
-instance. After the gateway is ready, select `instance-standby` to move the
-route back, then `gateway` to remove the instance. Never skip a mode.
-
-## Cost and monitoring assumptions
+## Cost and monitoring
 
 Approximate us-east-1 monthly cost is $5.75 when the `t4g.nano` runs 12 hours
-per day, or $7.26 continuously, compared with roughly $36 for the always-on
-managed gateway and EIP. Estimates exclude data transfer, NAT processing,
-CloudWatch monitoring, taxes, and price changes. A stopped instance still
-incurs Elastic IP and EBS storage charges.
+per day, or $7.26 continuously. Estimates exclude data transfer, monitoring,
+taxes, and price changes. A stopped instance still incurs Elastic IP and EBS
+storage charges, but not instance compute charges. The former always-on NAT
+Gateway and its EIP are removed when the updated stack is deployed.
+
+Use the `ipad-claude-nat-instance` dashboard and status, CPU credit, memory,
+and conntrack alarms. CloudWatch Agent publishes available memory; a systemd
+timer publishes conntrack count, limit, and utilization. CloudWatch metrics
+stop while the instance is stopped, and alarms treat missing data as
+non-breaching, so check EC2 status directly after a start.
 
 The instance uses SSM and IMDSv2, has no SSH key or management ingress, and
 disables source/destination checks. A systemd-managed iptables service restores
-VPC-scoped forwarding and MASQUERADE rules after reboot. CloudWatch Agent
-publishes available memory; a systemd timer publishes conntrack count, limit,
-and utilization. The dashboard uses EC2 network throughput metrics.
+VPC-scoped forwarding and MASQUERADE rules after reboot.

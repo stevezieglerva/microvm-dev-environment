@@ -51,28 +51,12 @@ Parameters:
     Type: String
     Default: ""
     Description: AgentCore web-search MCP endpoint (created out-of-band by deploy.sh; see WebSearchGatewayRole below).
-  NatMode:
-    Type: String
-    Default: gateway
-    AllowedValues: [gateway, instance-standby, instance-active, instance-only]
-    Description: >-
-      NAT rollout mode. Use instance-standby to provision the NAT instance,
-      instance-active to move private routes to it, and instance-only to remove
-      the managed NAT Gateway after egress validation.
-
 Globals:
   Function:
     Runtime: nodejs24.x
     Architectures: [arm64]
     Timeout: 30
     MemorySize: 256
-
-Conditions:
-  UseNatGateway: !Or
-    - !Equals [!Ref NatMode, gateway]
-    - !Equals [!Ref NatMode, instance-standby]
-    - !Equals [!Ref NatMode, instance-active]
-  UseNatInstance: !Not [!Equals [!Ref NatMode, gateway]]
 
 Resources:
 
@@ -145,30 +129,8 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { RouteTableId: !Ref PublicRouteTable, SubnetId: !Ref PublicSubnet2 }
 
-  NatEip:
-    Type: AWS::EC2::EIP
-    Condition: UseNatGateway
-    Properties:
-      Domain: vpc
-      Tags:
-        - { Key: Name, Value: ipad-claude-nat-gateway-eip }
-        - { Key: Type, Value: ai-vm }
-        - { Key: Created, Value: "2026-10-03" }
-
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Condition: UseNatGateway
-    Properties:
-      AllocationId: !GetAtt NatEip.AllocationId
-      SubnetId: !Ref PublicSubnet1
-      Tags:
-        - { Key: Name, Value: ipad-claude-nat-gateway }
-        - { Key: Type, Value: ai-vm }
-        - { Key: Created, Value: "2026-10-03" }
-
   NatInstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
-    Condition: UseNatInstance
     Properties:
       GroupDescription: Allow only VPC traffic through the NAT instance
       VpcId: !Ref Vpc
@@ -185,7 +147,6 @@ Resources:
 
   NatInstanceNetworkInterface:
     Type: AWS::EC2::NetworkInterface
-    Condition: UseNatInstance
     Properties:
       SubnetId: !Ref PublicSubnet1
       GroupSet: [!Ref NatInstanceSecurityGroup]
@@ -197,7 +158,6 @@ Resources:
 
   NatInstanceRole:
     Type: AWS::IAM::Role
-    Condition: UseNatInstance
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -215,13 +175,11 @@ Resources:
 
   NatInstanceProfile:
     Type: AWS::IAM::InstanceProfile
-    Condition: UseNatInstance
     Properties:
       Roles: [!Ref NatInstanceRole]
 
   NatInstance:
     Type: AWS::EC2::Instance
-    Condition: UseNatInstance
     DependsOn:
       - IgwAttachment
       - PublicRoute
@@ -384,7 +342,6 @@ Resources:
 
   NatInstanceEip:
     Type: AWS::EC2::EIP
-    Condition: UseNatInstance
     Properties:
       Domain: vpc
       Tags:
@@ -394,14 +351,12 @@ Resources:
 
   NatInstanceEipAssociation:
     Type: AWS::EC2::EIPAssociation
-    Condition: UseNatInstance
     Properties:
       AllocationId: !GetAtt NatInstanceEip.AllocationId
       NetworkInterfaceId: !Ref NatInstanceNetworkInterface
 
   NatStatusCheckAlarm:
     Type: AWS::CloudWatch::Alarm
-    Condition: UseNatInstance
     Properties:
       AlarmDescription: NAT instance EC2 or system status check failed.
       Namespace: AWS/EC2
@@ -420,7 +375,6 @@ Resources:
 
   NatCpuCreditAlarm:
     Type: AWS::CloudWatch::Alarm
-    Condition: UseNatInstance
     Properties:
       AlarmDescription: NAT instance CPU credit balance is low.
       Namespace: AWS/EC2
@@ -439,7 +393,6 @@ Resources:
 
   NatMemoryAlarm:
     Type: AWS::CloudWatch::Alarm
-    Condition: UseNatInstance
     Properties:
       AlarmDescription: NAT instance available memory is low.
       Namespace: AiVm/NatInstance
@@ -458,7 +411,6 @@ Resources:
 
   NatConntrackAlarm:
     Type: AWS::CloudWatch::Alarm
-    Condition: UseNatInstance
     Properties:
       AlarmDescription: NAT instance conntrack utilization is high.
       Namespace: AiVm/NatInstance
@@ -477,7 +429,6 @@ Resources:
 
   NatDashboard:
     Type: AWS::CloudWatch::Dashboard
-    Condition: UseNatInstance
     Metadata:
       cfn-lint:
         config:
@@ -506,8 +457,7 @@ Resources:
     Properties:
       RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !If [UseNatInstance, !Ref AWS::NoValue, !Ref NatGateway]
-      InstanceId: !If [UseNatInstance, !Ref NatInstance, !Ref AWS::NoValue]
+      InstanceId: !Ref NatInstance
 
   PrivateSubnet1RouteAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -972,7 +922,7 @@ Resources:
           NETWORK_CONNECTOR_ARN: !GetAtt VpcEgressConnector.Arn
           S3_FILES_FS_ID: !GetAtt S3FilesFileSystem.FileSystemId
           WORKSPACE_BUCKET_ARN: !GetAtt WorkspaceBucket.Arn
-          NAT_CONTROL_FUNCTION_ARN: !If [UseNatInstance, !GetAtt NatControlFunction.Arn, ""]
+          NAT_CONTROL_FUNCTION_ARN: !GetAtt NatControlFunction.Arn
       Policies:
         # SAM policy templates first:
         - SSMParameterWithSlashPrefixReadPolicy: { ParameterName: /ipad-claude/* }
@@ -995,13 +945,10 @@ Resources:
               Effect: Allow
               Action: iam:PassRole
               Resource: !GetAtt MicroVmExecutionRole.Arn
-            - !If
-              - UseNatInstance
-              - Sid: InvokeNatController
-                Effect: Allow
-                Action: lambda:InvokeFunction
-                Resource: !GetAtt NatControlFunction.Arn
-              - !Ref AWS::NoValue
+            - Sid: InvokeNatController
+              Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !GetAtt NatControlFunction.Arn
       Events:
         GetToken:
           Type: Api
@@ -1018,7 +965,6 @@ Resources:
 
   NatControlFunction:
     Type: AWS::Serverless::Function
-    Condition: UseNatInstance
     Properties:
       FunctionName: ipad-claude-nat-control
       CodeUri: functions/nat-control/
@@ -1219,14 +1165,9 @@ Outputs:
   MicrovmImageArn:
     Description: ARN of the MicroVM image (created/updated as part of this stack).
     Value: !GetAtt MicrovmImage.ImageArn
-  SelectedNatMode:
-    Description: NAT mode selected for this stack deployment.
-    Value: !Ref NatMode
   NatInstanceId:
-    Condition: UseNatInstance
-    Description: EC2 NAT instance ID (available in instance modes).
+    Description: EC2 NAT instance ID.
     Value: !Ref NatInstance
   NatInstancePublicIp:
-    Condition: UseNatInstance
     Description: Elastic IP assigned to the EC2 NAT instance.
     Value: !Ref NatInstanceEip

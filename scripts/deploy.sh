@@ -1,7 +1,6 @@
 #!/bin/bash
 # End-to-end deploy for ipad-claude
-# Usage: ./scripts/deploy.sh [--nat-mode <mode>] [--skip-infra] [--skip-mvm]
-#   --nat-mode      gateway, instance-standby, instance-active, or instance-only
+# Usage: ./scripts/deploy.sh [--skip-infra] [--skip-mvm]
 #   --skip-infra   reuse the existing SAM stack (skip sam build/deploy and the
 #                  MicroVM image entirely — frontend sync + smoke test only)
 #   --skip-mvm     skip the throwaway smoke-test VM
@@ -31,7 +30,6 @@ set -euo pipefail
 # dir to stdout, which would corrupt the command substitution below.
 SCRIPT_DIR="$(unset CDPATH; cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(unset CDPATH; cd "$SCRIPT_DIR/.." && pwd)"
-. "${SCRIPT_DIR}/nat-mode.sh"
 
 # Fixed identifier for this app's stack — matches samconfig.toml's own
 # stack_name literal (the two are independent tools/files, kept in sync by
@@ -40,30 +38,14 @@ STACK_NAME="ipad-claude"
 
 SKIP_INFRA=false
 SKIP_MVM=false
-REQUESTED_NAT_MODE=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --nat-mode)
-      [ "$#" -ge 2 ] || { echo "--nat-mode requires a value" >&2; exit 2; }
-      REQUESTED_NAT_MODE="$2"
-      shift 2
-      ;;
-    --nat-mode=*) REQUESTED_NAT_MODE="${1#*=}"; shift ;;
     --skip-infra) SKIP_INFRA=true; shift ;;
     --skip-mvm)   SKIP_MVM=true; shift ;;
     -h|--help) sed -n '1,12p' "$0"; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-
-if [ -n "$REQUESTED_NAT_MODE" ] && ! nat_mode_is_valid "$REQUESTED_NAT_MODE"; then
-  echo "Invalid --nat-mode '$REQUESTED_NAT_MODE' (expected gateway, instance-standby, instance-active, or instance-only)" >&2
-  exit 2
-fi
-if [ -n "$REQUESTED_NAT_MODE" ] && [ "$SKIP_INFRA" = true ]; then
-  echo "--nat-mode cannot be combined with --skip-infra" >&2
-  exit 2
-fi
 
 log() { echo -e "\033[1;36m▶ $*\033[0m"; }
 ok()  { echo -e "\033[1;32m✓ $*\033[0m"; }
@@ -78,37 +60,6 @@ ok "Authenticated as $CALLER_ARN (account $CALLER_ACCOUNT) — Ctrl+C now if tha
 
 out() { aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
   --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text 2>/dev/null || echo ""; }
-
-deployed_nat_mode() {
-  aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
-    --query "Stacks[0].Parameters[?ParameterKey=='NatMode'].ParameterValue | [0]" \
-    --output text 2>/dev/null || echo ""
-}
-
-CURRENT_NAT_MODE="$(deployed_nat_mode)"
-[ -n "$CURRENT_NAT_MODE" ] && [ "$CURRENT_NAT_MODE" != "None" ] || CURRENT_NAT_MODE="gateway"
-RESOLVED_NAT_MODE="${REQUESTED_NAT_MODE:-$CURRENT_NAT_MODE}"
-if ! nat_mode_transition_allowed "$CURRENT_NAT_MODE" "$RESOLVED_NAT_MODE"; then
-  err "Unsafe NAT transition: $CURRENT_NAT_MODE -> $RESOLVED_NAT_MODE (use adjacent rollout modes)"
-  exit 2
-fi
-
-if [ "$CURRENT_NAT_MODE" != "instance-active" ] && [ "$RESOLVED_NAT_MODE" = "instance-active" ]; then
-  NAT_INSTANCE_ID="$(out NatInstanceId)"
-  if [ -z "$NAT_INSTANCE_ID" ] || [ "$NAT_INSTANCE_ID" = "None" ]; then
-    err "Cannot activate NAT instance: NatInstanceId output is unavailable. Deploy instance-standby first."
-    exit 2
-  fi
-  NAT_STATUS="$(aws ec2 describe-instance-status --instance-ids "$NAT_INSTANCE_ID" \
-    --include-all-instances --query 'InstanceStatuses[0].[InstanceState.Name,SystemStatus.Status,InstanceStatus.Status]' \
-    --output text 2>/dev/null || echo "")"
-  if [ "$NAT_STATUS" != "running	ok	ok" ] && [ "$NAT_STATUS" != "running ok ok" ]; then
-    err "Cannot activate NAT instance $NAT_INSTANCE_ID: require running, system ok, instance ok (got '$NAT_STATUS')."
-    exit 2
-  fi
-  ok "NAT instance $NAT_INSTANCE_ID is running with both EC2 status checks passing"
-fi
-log "NAT mode: $CURRENT_NAT_MODE -> $RESOLVED_NAT_MODE"
 
 # ── AgentCore web-search gateway + MicroVM image inputs ────────────────────────
 # Both MicrovmCodeUri and WebSearchGatewayUrl are inputs the MicrovmImage
@@ -214,9 +165,8 @@ fi
 # ── Infrastructure + MicroVM image: SAM build + deploy ─────────────────────────
 # No --profile/--region/--stack-name here — sam reads all three from
 # samconfig.toml on its own. --parameter-overrides supplies the computed
-# MicrovmCodeUri and WebSearchGatewayUrl, plus the resolved NAT mode; anything
-# else set via samconfig.toml's own parameter_overrides (e.g. LoginEmail) is
-# retained unchanged by CloudFormation, since it isn't mentioned in this list.
+# MicrovmCodeUri and WebSearchGatewayUrl. Existing stack parameters not listed
+# here (e.g. LoginEmail) retain their deployed values.
 if [ "$SKIP_INFRA" = false ]; then
   log "Building SAM application..."
   (cd "$ROOT_DIR" && sam build --template template.yaml)
@@ -224,7 +174,7 @@ if [ "$SKIP_INFRA" = false ]; then
   log "Deploying SAM stack (this includes the MicroVM image build if microvm/" \
       "changed — CloudFormation waits for it, ~5-10 min on a real change)..."
   (cd "$ROOT_DIR" && sam deploy \
-    --parameter-overrides "MicrovmCodeUri=$MICROVM_CODE_URI WebSearchGatewayUrl=$WEBSEARCH_GATEWAY_URL NatMode=$RESOLVED_NAT_MODE" \
+    --parameter-overrides "MicrovmCodeUri=$MICROVM_CODE_URI WebSearchGatewayUrl=$WEBSEARCH_GATEWAY_URL" \
     --tags "Type=ai-vm" \
     --no-confirm-changeset --no-fail-on-empty-changeset)
   ok "SAM stack deployed"

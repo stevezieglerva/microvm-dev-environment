@@ -38,16 +38,17 @@ Keep the ARM64 Amazon Linux 2023 `t4g.nano` instance for the EC2 NAT host and
 set `InstanceType` in the template to match. Retain the persistent 1 GiB
 `/swapfile` created before package installation. Reconsider a larger type if
 monitoring shows recurring memory pressure or another out-of-memory event.
-Keep the network interface, Elastic IP, forwarding rules, monitoring, CPU
-credit mode, and NAT Gateway migration modes from ADR 0001 unchanged.
+Keep the network interface, Elastic IP, forwarding rules, monitoring, and CPU
+credit mode from ADR 0001. ADR 0003 removes the unused managed NAT Gateway and
+its rollout modes.
 
 ## Consequences
 
 - The `t4g.nano` provides 0.50 GiB of RAM; the 1 GiB swap file is disk-backed
   virtual memory and does not change the instance's physical RAM size.
 - Private-subnet egress is unavailable while the NAT instance is stopped.
-- The NAT Gateway remains available for rollback until egress validation is
-  complete and an operator selects `instance-only`.
+- The managed NAT Gateway fallback was removed by the stack update recorded in
+  ADR 0003.
 
 ## References
 

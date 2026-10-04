@@ -1,12 +1,12 @@
 [1;36m▶ Resolving AWS identity (from your default profile/env — see the header comment)...[0m
 [1;32m✓ Authenticated as arn:aws:iam::112280397275:user/ziegler-aws (account 112280397275) — Ctrl+C now if that's wrong[0m
-[1;36m▶ NAT mode: instance-standby -> instance-standby[0m
 [1;36m▶ Ensuring AgentCore web-search gateway...[0m
 [1;32m✓ Web-search gateway exists: ipadclaudewebsearch-tc7vqgjvqp[0m
 [1;32m✓ Web-search MCP endpoint: https://ipadclaudewebsearch-tc7vqgjvqp.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp[0m
 [1;36m▶ Packaging MicroVM source...[0m
-Completed 54.4 KiB/54.4 KiB (219.3 KiB/s) with 1 file(s) remainingupload: ../../../../../../tmp/remote-dev-microvm.zip to s3://ipad-claude-artifactbucket-6a1wsmfsvzwc/microvm/remote-dev-microvm-c1736d3b31db3e65.zip
-[1;32m✓ Source uploaded to s3://ipad-claude-artifactbucket-6a1wsmfsvzwc/microvm/remote-dev-microvm-c1736d3b31db3e65.zip[0m
+Completed 54.4 KiB/54.4 KiB (178.4 KiB/s) with 1 file(s) remaining
+upload: ../../../../../../tmp/remote-dev-microvm.zip to s3://ipad-claude-artifactbucket-6a1wsmfsvzwc/microvm/remote-dev-microvm-75389a690fd8ae4a.zip
+[1;32m✓ Source uploaded to s3://ipad-claude-artifactbucket-6a1wsmfsvzwc/microvm/remote-dev-microvm-75389a690fd8ae4a.zip[0m
 [1;36m▶ Building SAM application...[0m
 
 Build Succeeded
@@ -35,7 +35,7 @@ Commands you can use next
 	Disable rollback             : False
 	Deployment s3 bucket         : aws-sam-cli-managed-default-samclisourcebucket-1enti6xg9t4rt
 	Capabilities                 : ["CAPABILITY_NAMED_IAM"]
-	Parameter overrides          : {"MicrovmCodeUri": "s3://ipad-claude-artifactbucket-6a1wsmfsvzwc/microvm/remote-dev-microvm-c1736d3b31db3e65.zip", "WebSearchGatewayUrl": "https://ipadclaudewebsearch-tc7vqgjvqp.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp", "NatMode": "instance-standby"}
+	Parameter overrides          : {"MicrovmCodeUri": "s3://ipad-claude-artifactbucket-6a1wsmfsvzwc/microvm/remote-dev-microvm-75389a690fd8ae4a.zip", "WebSearchGatewayUrl": "https://ipadclaudewebsearch-tc7vqgjvqp.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"}
 	Signing Profiles             : {}
 
 Initiating deployment
@@ -49,15 +49,15 @@ CloudFormation stack changeset
 -------------------------------------------------------------------------------------------------
 Operation                LogicalResourceId        ResourceType             Replacement            
 -------------------------------------------------------------------------------------------------
-+ Add                    NatControlFunctionReco   AWS::Lambda::Permissio   N/A                    
-                         ncilePermission          n                                               
-+ Add                    NatControlFunctionReco   AWS::Events::Rule        N/A                    
-                         ncile                                                                    
-+ Add                    NatControlFunctionRole   AWS::IAM::Role           N/A                    
-+ Add                    NatControlFunction       AWS::Lambda::Function    N/A                    
 * Modify                 MicrovmImage             AWS::Lambda::MicrovmIm   False                  
                                                   age                                             
 * Modify                 NatConntrackAlarm        AWS::CloudWatch::Alarm   False                  
+* Modify                 NatControlFunctionReco   AWS::Lambda::Permissio   Conditional
+                         ncilePermission          n
+* Modify                 NatControlFunctionReco   AWS::Events::Rule        False
+                         ncile
+* Modify                 NatControlFunctionRole   AWS::IAM::Role           False
+* Modify                 NatControlFunction       AWS::Lambda::Function    False
 * Modify                 NatCpuCreditAlarm        AWS::CloudWatch::Alarm   False                  
 * Modify                 NatDashboard             AWS::CloudWatch::Dashb   False                  
                                                   oard                                            
@@ -69,13 +69,15 @@ Operation                LogicalResourceId        ResourceType             Repla
                                                   pi                                              
 * Modify                 TokenFunctionRole        AWS::IAM::Role           False                  
 * Modify                 TokenFunction            AWS::Lambda::Function    False                  
+- Delete                 NatEip                   AWS::EC2::EIP            N/A
+- Delete                 NatGateway               AWS::EC2::NatGateway     N/A
 -------------------------------------------------------------------------------------------------
 
 
-Changeset created successfully. arn:aws:cloudformation:us-east-1:112280397275:changeSet/samcli-deploy1791131906/13a9d777-99fc-494d-ac4a-f72a7277c442
+Changeset created successfully. arn:aws:cloudformation:us-east-1:112280397275:changeSet/samcli-deploy1791133594/f5a3000f-002b-4c53-b1c6-5266103b2c86
 
 
-2026-10-04 12:38:48 - Waiting for stack create/update to complete
+2026-10-04 13:06:56 - Waiting for stack create/update to complete
 
 CloudFormation events from stack operations (refresh every 5.0 seconds)
 -------------------------------------------------------------------------------------------------
@@ -83,54 +85,22 @@ ResourceStatus           ResourceType             LogicalResourceId        Resou
 -------------------------------------------------------------------------------------------------
 UPDATE_IN_PROGRESS       AWS::CloudFormation::S   ipad-claude              User Initiated         
                          tack                                                                     
-UPDATE_IN_PROGRESS       AWS::EC2::Instance       NatInstance              -                      
 UPDATE_IN_PROGRESS       AWS::Lambda::MicrovmIm   MicrovmImage             -                      
                          age                                                                      
-UPDATE_IN_PROGRESS -     AWS::EC2::Instance       NatInstance              Eventual consistency   
-CONFIGURATION_COMPLETE                                                     check initiated        
-UPDATE_COMPLETE          AWS::EC2::Instance       NatInstance              -                      
-CREATE_IN_PROGRESS       AWS::IAM::Role           NatControlFunctionRole   -                      
-CREATE_IN_PROGRESS       AWS::IAM::Role           NatControlFunctionRole   Resource creation      
-                                                                           Initiated              
-CREATE_IN_PROGRESS -     AWS::IAM::Role           NatControlFunctionRole   Eventual consistency   
-CONFIGURATION_COMPLETE                                                     check initiated        
-CREATE_COMPLETE          AWS::IAM::Role           NatControlFunctionRole   -                      
-CREATE_IN_PROGRESS       AWS::Lambda::Function    NatControlFunction       -                      
-CREATE_IN_PROGRESS       AWS::Lambda::Function    NatControlFunction       Resource creation      
-                                                                           Initiated              
-CREATE_IN_PROGRESS -     AWS::Lambda::Function    NatControlFunction       Eventual consistency   
-CONFIGURATION_COMPLETE                                                     check initiated        
-CREATE_COMPLETE          AWS::Lambda::Function    NatControlFunction       -                      
-CREATE_IN_PROGRESS       AWS::Events::Rule        NatControlFunctionReco   -                      
-                                                  ncile                                           
-CREATE_IN_PROGRESS       AWS::Events::Rule        NatControlFunctionReco   Resource creation      
-                                                  ncile                    Initiated              
-UPDATE_IN_PROGRESS       AWS::IAM::Role           TokenFunctionRole        -                      
-UPDATE_IN_PROGRESS -     AWS::IAM::Role           TokenFunctionRole        Eventual consistency   
-CONFIGURATION_COMPLETE                                                     check initiated        
-UPDATE_COMPLETE          AWS::IAM::Role           TokenFunctionRole        -                      
-CREATE_IN_PROGRESS -     AWS::Events::Rule        NatControlFunctionReco   Eventual consistency   
-CONFIGURATION_COMPLETE                            ncile                    check initiated        
-CREATE_COMPLETE          AWS::Events::Rule        NatControlFunctionReco   -                      
-                                                  ncile                                           
-CREATE_IN_PROGRESS       AWS::Lambda::Permissio   NatControlFunctionReco   -                      
-                         n                        ncilePermission                                 
-CREATE_IN_PROGRESS       AWS::Lambda::Permissio   NatControlFunctionReco   Resource creation      
-                         n                        ncilePermission          Initiated              
-CREATE_IN_PROGRESS -     AWS::Lambda::Permissio   NatControlFunctionReco   Eventual consistency   
-CONFIGURATION_COMPLETE   n                        ncilePermission          check initiated        
-CREATE_COMPLETE          AWS::Lambda::Permissio   NatControlFunctionReco   -                      
-                         n                        ncilePermission                                 
 UPDATE_IN_PROGRESS -     AWS::Lambda::MicrovmIm   MicrovmImage             Eventual consistency   
 CONFIGURATION_COMPLETE   age                                               check initiated        
 UPDATE_COMPLETE          AWS::Lambda::MicrovmIm   MicrovmImage             -                      
                          age                                                                      
-UPDATE_IN_PROGRESS       AWS::Lambda::Function    TokenFunction            -                      
-UPDATE_IN_PROGRESS -     AWS::Lambda::Function    TokenFunction            Eventual consistency   
-CONFIGURATION_COMPLETE                                                     check initiated        
-UPDATE_COMPLETE          AWS::Lambda::Function    TokenFunction            -                      
 UPDATE_COMPLETE_CLEANU   AWS::CloudFormation::S   ipad-claude              -                      
 P_IN_PROGRESS            tack                                                                     
+DELETE_IN_PROGRESS       AWS::EC2::NatGateway     NatGateway               -
+DELETE_IN_PROGRESS -     AWS::EC2::NatGateway     NatGateway               Eventual consistency
+CONFIGURATION_COMPLETE                                                     check initiated
+DELETE_COMPLETE          AWS::EC2::NatGateway     NatGateway               -
+DELETE_IN_PROGRESS       AWS::EC2::EIP            NatEip                   -
+DELETE_IN_PROGRESS -     AWS::EC2::EIP            NatEip                   Eventual consistency
+CONFIGURATION_COMPLETE                                                     check initiated
+DELETE_COMPLETE          AWS::EC2::EIP            NatEip                   -
 UPDATE_COMPLETE          AWS::CloudFormation::S   ipad-claude              -                      
                          tack                                                                     
 -------------------------------------------------------------------------------------------------
@@ -149,7 +119,7 @@ Description         -
 Value               ipad-claude-artifactbucket-6a1wsmfsvzwc                                     
 
 Key                 NatInstanceId                                                               
-Description         EC2 NAT instance ID (available in instance modes).                          
+Description         EC2 NAT instance ID.
 Value               i-0bf6ba5bb666a7536                                                         
 
 Key                 LoginEmail                                                                  
@@ -164,10 +134,6 @@ Value               E2HVUO4VDZPE6J
 Key                 TokenApiUrl                                                                 
 Description         Token-vending API endpoint.                                                 
 Value               https://tngj2tcut6.execute-api.us-east-1.amazonaws.com/prod/token           
-
-Key                 SelectedNatMode                                                             
-Description         NAT mode selected for this stack deployment.                                
-Value               instance-standby                                                            
 
 Key                 CreateUserCommand                                                           
 Description         Run this once to create your first login. sam deploy prints this            
@@ -229,12 +195,13 @@ Successfully created/updated stack - ipad-claude in us-east-1
 [1;32m✓ SAM stack deployed[0m
 [1;36m▶ Injecting runtime config into frontend...[0m
 [1;36m▶ Syncing frontend to S3 (ipad-claude-frontendbucket-gbqrkaxupchq)...[0m
-Completed 50.3 KiB/50.3 KiB (202.7 KiB/s) with 1 file(s) remainingupload: ../../../../../../tmp/ipad-claude-index.html to s3://ipad-claude-frontendbucket-gbqrkaxupchq/index.html
+Completed 50.3 KiB/50.3 KiB (192.3 KiB/s) with 1 file(s) remaining
+upload: ../../../../../../tmp/ipad-claude-index.html to s3://ipad-claude-frontendbucket-gbqrkaxupchq/index.html
 [1;32m✓ Frontend synced and CDN invalidated[0m
 [1;36m▶ Creating throwaway access point for smoke test...[0m
 [1;36m▶ Launching smoke-test MicroVM...[0m
-[1;32m✓ Smoke-test MicroVM launched: microvm-c99f2239-8289-3310-9f17-c9b8ba4e2104[0m
-[1;32m✓ Endpoint: https://02d083e7-1edf-fc65-9f94-ab2c0bd91df1.lambda-microvm.us-east-1.on.aws[0m
+[1;32m✓ Smoke-test MicroVM launched: microvm-bcb2733d-3013-3845-b886-b510401e3d14[0m
+[1;32m✓ Endpoint: https://6ed083f3-e050-752a-f0c1-5f8d3eac7393.lambda-microvm.us-east-1.on.aws[0m
 [1;36m▶ Smoke-testing ttyd (port 8080)...[0m
 [1;32m✓ ttyd responding (HTTP 200)[0m
 [1;36m▶ Tearing down smoke-test VM...[0m
