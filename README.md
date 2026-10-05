@@ -233,7 +233,8 @@ readiness. A serialized controller keeps it running while sessions are active
 or uncertain and shuts it down after all tracked sessions are suspended or
 terminated. MicroVMs have a one-hour maximum lifetime. A daily 10 p.m.
 America/New_York schedule terminates all tracked MicroVMs and stops the NAT
-instance.
+instance. See [ADR 0004](docs/adr/0004-bound-microvm-and-nat-runtime.md) for
+the runtime and cost decision.
 
 ### Stage 1 — Infrastructure (SAM)
 

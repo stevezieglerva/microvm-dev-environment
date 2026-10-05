@@ -16,8 +16,9 @@ The initial egress checks passed on 2026-10-04 from both private subnets and the
 real MicroVM connector. They covered public HTTPS, AWS and STS APIs, Bedrock,
 GitHub, PyPI, AgentCore web search, and the S3 Files home mount.
 
-See [ADR 0001](adr/0001-use-stoppable-ec2-nat-instance.md) for the NAT design
-and [ADR 0002](adr/0002-increase-nat-instance-memory.md) for the instance size.
+See [ADR 0001](adr/0001-use-stoppable-ec2-nat-instance.md) for the NAT design,
+[ADR 0002](adr/0002-increase-nat-instance-memory.md) for the instance size, and
+[ADR 0004](adr/0004-bound-microvm-and-nat-runtime.md) for the cost lifecycle.
 
 ## Automatic lifecycle
 
@@ -32,9 +33,10 @@ only when every tracked VM is suspended or terminated. The controller does not
 change routes. Its concurrency limit and start marker protect a concurrent
 session start from an idle stop decision.
 
-The existing 7,200-second MicroVM idle policy remains unchanged. Do not stop
-the NAT instance while a session needs internet access for package downloads,
-Git, Bedrock, AgentCore, or the S3 Files mount.
+The existing 7,200-second MicroVM idle policy remains unchanged. Outside the
+nightly forced shutdown, do not stop the NAT instance while a session needs
+internet access for package downloads, Git, Bedrock, AgentCore, or the S3 Files
+mount.
 
 The stack also enforces a one-hour maximum MicroVM lifetime. A daily EventBridge
 rule triggers the shutdown at 10 p.m. America/New_York, terminating all tracked
