@@ -118,10 +118,19 @@ async function nightlyShutdown({ ec2Client = ec2, ssmClient = ssm, stateFn = mic
   return { status: 'nightly-shutdown-requested', microvms: results, nat: natStatus };
 }
 
+function isTenPmEastern(scheduledAt) {
+  const date = scheduledAt ? new Date(scheduledAt) : new Date();
+  const hour = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23' }).format(date);
+  return hour === '22';
+}
+
 exports.handler = async event => {
   console.log('NAT control request', JSON.stringify(event));
   if (event.action === 'ensure-running') return ensureRunning();
-  if (event.action === 'nightly-shutdown') return nightlyShutdown();
+  if (event.action === 'nightly-shutdown') {
+    if (!isTenPmEastern(event.scheduledAt)) return { status: 'skipped-outside-10pm-eastern' };
+    return nightlyShutdown();
+  }
   return reconcile();
 };
 exports._test = { routeUsesNat, ensureRunning, reconcile, nightlyShutdown, trackedIds };
