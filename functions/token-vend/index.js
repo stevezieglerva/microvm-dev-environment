@@ -165,13 +165,13 @@ async function runNewMvm(accessPointId) {
     // Idle = no INBOUND proxy traffic. Outbound work (Claude calling Bedrock)
     // does not reset the clock, so a closed tab means the countdown is running
     // even while a job grinds. 2h keeps kicked-off jobs alive tab-less;
-    // maximumDurationInSeconds (8h) is the hard cap either way.
+    // maximumDurationInSeconds (1h) is the hard cap either way.
     idlePolicy: {
       maxIdleDurationSeconds: 7200,
       suspendedDurationSeconds: 1800,
       autoResumeEnabled: true,
     },
-    maximumDurationInSeconds: 28800,
+    maximumDurationInSeconds: 3600,
     ingressNetworkConnectors: [
       `arn:aws:lambda:${region()}:aws:network-connector:aws-network-connector:HTTP_INGRESS`,
       `arn:aws:lambda:${region()}:aws:network-connector:aws-network-connector:SHELL_INGRESS`,

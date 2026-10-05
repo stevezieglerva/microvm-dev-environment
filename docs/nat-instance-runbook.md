@@ -36,6 +36,10 @@ The existing 7,200-second MicroVM idle policy remains unchanged. Do not stop
 the NAT instance while a session needs internet access for package downloads,
 Git, Bedrock, AgentCore, or the S3 Files mount.
 
+The stack also enforces a one-hour maximum MicroVM lifetime. A daily EventBridge
+Scheduler job at 10 p.m. America/New_York terminates all tracked MicroVMs and
+requests that the NAT instance stop, even if a session is still active.
+
 ## Verify egress
 
 Confirm the instance is running and both EC2 status checks are `ok`:

@@ -11,7 +11,7 @@ try {
 }
 const { EC2Client, DescribeRouteTablesCommand, DescribeInstancesCommand, StartInstancesCommand, StopInstancesCommand } = ec2Sdk;
 const { SSMClient, GetParameterCommand, PutParameterCommand, GetParametersByPathCommand } = ssmSdk;
-const { state: microvmState } = require('./microvm');
+const { state: microvmState, terminate: terminateMicrovm } = require('./microvm');
 const { routeUsesNatFromRoutes, sessionIsActive, sessionsAreIdle } = require('./decisions');
 
 const ec2 = new EC2Client({ maxAttempts: 3 });
@@ -93,9 +93,35 @@ async function reconcile({ ec2Client = ec2, ssmClient = ssm, stateFn = microvmSt
   return { status: 'stopped', sessions: ids.length };
 }
 
+async function nightlyShutdown({ ec2Client = ec2, ssmClient = ssm, stateFn = microvmState, terminateFn = terminateMicrovm } = {}) {
+  const ids = await trackedIds(ssmClient);
+  const results = [];
+  for (const id of ids) {
+    try {
+      const state = await stateFn(id);
+      if (state === 'TERMINATED' || state === 'NOT_FOUND') results.push({ id, status: 'already-terminated' });
+      else if (state === 'TERMINATING') results.push({ id, status: 'termination-in-progress' });
+      else {
+        await terminateFn(id);
+        results.push({ id, status: 'termination-requested' });
+      }
+    } catch (error) {
+      results.push({ id, status: 'termination-failed', error: error.message });
+      console.error('Nightly MicroVM termination failed', id, error.message);
+    }
+  }
+  const current = await instanceState(ec2Client);
+  if (current === 'running' || current === 'pending') await ec2Client.send(new StopInstancesCommand({ InstanceIds: [process.env.NAT_INSTANCE_ID] }));
+  const natStatus = current === 'running' || current === 'pending' ? 'stopping' : current;
+  console.log('Nightly shutdown requested', JSON.stringify({ microvms: results, nat: natStatus }));
+  if (results.some(result => result.status === 'termination-failed')) throw new Error('One or more MicroVM terminations failed; Scheduler will retry');
+  return { status: 'nightly-shutdown-requested', microvms: results, nat: natStatus };
+}
+
 exports.handler = async event => {
   console.log('NAT control request', JSON.stringify(event));
   if (event.action === 'ensure-running') return ensureRunning();
+  if (event.action === 'nightly-shutdown') return nightlyShutdown();
   return reconcile();
 };
-exports._test = { routeUsesNat, ensureRunning, reconcile, trackedIds };
+exports._test = { routeUsesNat, ensureRunning, reconcile, nightlyShutdown, trackedIds };

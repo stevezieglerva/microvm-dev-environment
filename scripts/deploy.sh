@@ -255,7 +255,7 @@ if [ "$SKIP_MVM" = false ]; then
     --image-identifier "$IMAGE_ID" \
     --execution-role-arn "$EXECUTION_ROLE" \
     --idle-policy '{"maxIdleDurationSeconds":1800,"suspendedDurationSeconds":600,"autoResumeEnabled":true}' \
-    --maximum-duration-in-seconds 28800 \
+    --maximum-duration-in-seconds 3600 \
     --ingress-network-connectors "[\"arn:aws:lambda:${REGION}:aws:network-connector:aws-network-connector:HTTP_INGRESS\",\"arn:aws:lambda:${REGION}:aws:network-connector:aws-network-connector:SHELL_INGRESS\"]" \
     $EGRESS_FLAG \
     ${SMOKE_AP:+--run-hook-payload "{\"accessPointId\":\"$SMOKE_AP\"}"} \

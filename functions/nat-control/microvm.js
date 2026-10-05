@@ -43,4 +43,15 @@ async function state(identifier) {
   }
 }
 
-module.exports = { state };
+async function terminate(identifier) {
+  const host = `lambda.${process.env.AWS_REGION}.amazonaws.com`;
+  try {
+    const result = await request('DELETE', host, `/2025-09-09/microvms/${encodeURIComponent(identifier)}`);
+    return result.state || 'TERMINATION_REQUESTED';
+  } catch (error) {
+    if (error.statusCode === 404) return 'NOT_FOUND';
+    throw error;
+  }
+}
+
+module.exports = { state, terminate };

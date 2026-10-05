@@ -993,7 +993,7 @@ Resources:
               Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ipad-claude/*"
             - Sid: MicroVmState
               Effect: Allow
-              Action: lambda:GetMicrovm
+              Action: [lambda:GetMicrovm, lambda:TerminateMicrovm]
               Resource: "*"
               Condition: { StringEquals: { aws:RequestedRegion: !Ref AWS::Region } }
       Events:
@@ -1002,6 +1002,65 @@ Resources:
           Properties:
             Schedule: rate(1 minute)
             Enabled: true
+
+  NightlyShutdownScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-nightly-shutdown-scheduler"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${AWS::StackName}-schedules/${AWS::StackName}-nightly-shutdown"
+      Policies:
+        - PolicyName: InvokeNatControlFunction
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt NatControlFunction.Arn
+      Tags:
+        - Key: Type
+          Value: ai-vm
+        - Key: Name
+          Value: ipad-claude-nightly-shutdown-scheduler
+        - Key: Created
+          Value: "2026-10-05"
+
+  NightlyShutdownScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: !Sub "${AWS::StackName}-schedules"
+      Tags:
+        - Key: Type
+          Value: ai-vm
+        - Key: Name
+          Value: ipad-claude-schedules
+        - Key: Created
+          Value: "2026-10-05"
+
+  NightlyShutdownSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub "${AWS::StackName}-nightly-shutdown"
+      GroupName: !Ref NightlyShutdownScheduleGroup
+      Description: Terminate tracked MicroVMs and stop the NAT instance every night.
+      ScheduleExpression: "cron(0 22 * * ? *)"
+      ScheduleExpressionTimezone: America/New_York
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: ENABLED
+      Target:
+        Arn: !GetAtt NatControlFunction.Arn
+        RoleArn: !GetAtt NightlyShutdownScheduleRole.Arn
+        Input: '{"action":"nightly-shutdown"}'
 
   # ── Frontend: S3 + CloudFront ─────────────────────────────────────────────────
   FrontendOac:
