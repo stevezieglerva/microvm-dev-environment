@@ -6,17 +6,20 @@ try {
 } catch (error) {
   class Client { async send() { throw error; } }
   const command = name => ({ [name]: class { constructor(input) { this.input = input; } } })[name];
-  ec2Sdk = { EC2Client: Client, DescribeRouteTablesCommand: command('DescribeRouteTablesCommand'), DescribeInstancesCommand: command('DescribeInstancesCommand'), StartInstancesCommand: command('StartInstancesCommand'), StopInstancesCommand: command('StopInstancesCommand') };
-  ssmSdk = { SSMClient: Client, GetParameterCommand: command('GetParameterCommand'), PutParameterCommand: command('PutParameterCommand'), GetParametersByPathCommand: command('GetParametersByPathCommand') };
+  ec2Sdk = { EC2Client: Client, DescribeRouteTablesCommand: command('DescribeRouteTablesCommand'), DescribeInstancesCommand: command('DescribeInstancesCommand'), DescribeInstanceStatusCommand: command('DescribeInstanceStatusCommand'), StartInstancesCommand: command('StartInstancesCommand'), StopInstancesCommand: command('StopInstancesCommand') };
+  ssmSdk = { SSMClient: Client, GetParameterCommand: command('GetParameterCommand'), PutParameterCommand: command('PutParameterCommand'), DeleteParameterCommand: command('DeleteParameterCommand'), GetParametersByPathCommand: command('GetParametersByPathCommand') };
 }
-const { EC2Client, DescribeRouteTablesCommand, DescribeInstancesCommand, StartInstancesCommand, StopInstancesCommand } = ec2Sdk;
-const { SSMClient, GetParameterCommand, PutParameterCommand, GetParametersByPathCommand } = ssmSdk;
+const { EC2Client, DescribeRouteTablesCommand, DescribeInstancesCommand, DescribeInstanceStatusCommand, StartInstancesCommand, StopInstancesCommand } = ec2Sdk;
+const { SSMClient, GetParameterCommand, PutParameterCommand, DeleteParameterCommand, GetParametersByPathCommand } = ssmSdk;
 const { state: microvmState, terminate: terminateMicrovm } = require('./microvm');
 const { routeUsesNatFromRoutes, sessionIsActive, sessionsAreIdle } = require('./decisions');
 
 const ec2 = new EC2Client({ maxAttempts: 3 });
 const ssm = new SSMClient({ maxAttempts: 3 });
 const graceMs = 5 * 60 * 1000;
+const agentCoreJobCapMs = 60 * 60 * 1000;
+const agentCoreStartupCapMs = 12 * 60 * 1000;
+const agentCoreCleanupGraceMs = 15 * 60 * 1000;
 const retryable = message => ({ status: 'retryable', message });
 
 async function routeUsesNat(client = ec2) {
@@ -55,6 +58,97 @@ async function parameter(name, client = ssm) {
   catch (error) { if (error.name === 'ParameterNotFound') return ''; throw error; }
 }
 
+function agentCoreLeaseName(jobId) {
+  return `${process.env.AGENTCORE_JOB_LEASES_PATH || '/ipad-claude/agentcore/jobs/'}${jobId}`;
+}
+
+function parseLeaseExpiry(value) {
+  try {
+    const lease = JSON.parse(value);
+    return Number.isFinite(lease.expiresAt) ? lease.expiresAt : null;
+  } catch {
+    return null;
+  }
+}
+
+async function activeAgentCoreLeaseCount({ ssmClient = ssm, now = Date.now() } = {}) {
+  const path = process.env.AGENTCORE_JOB_LEASES_PATH || '/ipad-claude/agentcore/jobs/';
+  let token;
+  let active = 0;
+  do {
+    const page = await ssmClient.send(new GetParametersByPathCommand({ Path: path, Recursive: true, NextToken: token }));
+    for (const item of page.Parameters || []) {
+      const expiresAt = parseLeaseExpiry(item.Value || '');
+      if (expiresAt === null || expiresAt > now) active++;
+      else await ssmClient.send(new DeleteParameterCommand({ Name: item.Name }));
+    }
+    token = page.NextToken;
+  } while (token);
+  return active;
+}
+
+function leaseValue(now, deadlineAt) {
+  const hardDeadline = Number.isFinite(deadlineAt) && deadlineAt > now && deadlineAt <= now + agentCoreStartupCapMs + agentCoreJobCapMs
+    ? deadlineAt
+    : now + agentCoreStartupCapMs + agentCoreJobCapMs;
+  return JSON.stringify({ hardDeadlineAt: hardDeadline, expiresAt: hardDeadline + agentCoreCleanupGraceMs });
+}
+
+async function acquireAgentCoreLease(jobId, { ec2Client = ec2, ssmClient = ssm, now = Date.now(), deadlineAt } = {}) {
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(jobId || '')) return { status: 'failed', message: 'invalid job id' };
+  const name = agentCoreLeaseName(jobId);
+  const value = leaseValue(now, deadlineAt);
+  await ssmClient.send(new PutParameterCommand({ Name: name, Value: value, Type: 'String', Overwrite: true }));
+  try {
+    const result = await ensureRunning({ ec2Client, ssmClient });
+    if (['unmanaged', 'failed'].includes(result.status)) throw new Error(result.message || result.status);
+    return { status: result.status === 'acknowledged' ? result.state : result.status, leaseName: name };
+  } catch (error) {
+    await ssmClient.send(new DeleteParameterCommand({ Name: name }));
+    throw error;
+  }
+}
+
+async function renewAgentCoreLease(jobId, { ssmClient = ssm, now = Date.now() } = {}) {
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(jobId || '')) return { status: 'failed', message: 'invalid job id' };
+  const name = agentCoreLeaseName(jobId);
+  const current = await parameter(name, ssmClient);
+  if (!current) return { status: 'not-found' };
+  let lease;
+  try { lease = JSON.parse(current); } catch { return { status: 'failed', message: 'invalid lease value' }; }
+  if (!Number.isFinite(lease.hardDeadlineAt) || lease.hardDeadlineAt <= now) return { status: 'expired' };
+  const value = JSON.stringify({
+    hardDeadlineAt: lease.hardDeadlineAt,
+    expiresAt: lease.hardDeadlineAt + agentCoreCleanupGraceMs,
+  });
+  await ssmClient.send(new PutParameterCommand({ Name: name, Value: value, Type: 'String', Overwrite: true }));
+  return { status: 'renewed' };
+}
+
+async function waitForAgentCoreNat({ ec2Client = ec2, ssmClient = ssm, jobId, deadlineAt, now = Date.now() } = {}) {
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(jobId || '')) return { status: 'failed', message: 'invalid job id' };
+  if (!(await parameter(agentCoreLeaseName(jobId), ssmClient))) return { status: 'failed', message: 'AgentCore job lease is missing' };
+  if (Number.isFinite(deadlineAt) && now >= deadlineAt) return { status: 'expired' };
+  const state = await instanceState(ec2Client);
+  if (state === 'stopped') {
+    const result = await ensureRunning({ ec2Client, ssmClient });
+    return result.status === 'acknowledged' ? { status: 'waiting' } : result;
+  }
+  if (state !== 'running') return ['pending', 'stopping'].includes(state) ? { status: 'waiting' } : retryable(`NAT instance is ${state}`);
+  const result = await ec2Client.send(new DescribeInstanceStatusCommand({ InstanceIds: [process.env.NAT_INSTANCE_ID], IncludeAllInstances: true }));
+  const status = result.InstanceStatuses?.[0];
+  return status?.InstanceStatus?.Status === 'ok' && status?.SystemStatus?.Status === 'ok'
+    ? { status: 'ready' }
+    : { status: 'waiting' };
+}
+
+async function releaseAgentCoreLease(jobId, { ssmClient = ssm } = {}) {
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(jobId || '')) return { status: 'failed', message: 'invalid job id' };
+  try { await ssmClient.send(new DeleteParameterCommand({ Name: agentCoreLeaseName(jobId) })); }
+  catch (error) { if (error.name !== 'ParameterNotFound') throw error; }
+  return { status: 'released' };
+}
+
 async function trackedIds(client = ssm) {
   const ids = [];
   let token;
@@ -72,6 +166,10 @@ async function reconcile({ ec2Client = ec2, ssmClient = ssm, stateFn = microvmSt
   if (!(await routeUsesNat(ec2Client))) return { status: 'unmanaged' };
   const started = await parameter(process.env.STARTED_AT_PARAMETER, ssmClient);
   if (started && now - Date.parse(started) < graceMs) return { status: 'grace' };
+  let agentCoreJobs;
+  try { agentCoreJobs = await activeAgentCoreLeaseCount({ ssmClient, now }); }
+  catch (error) { console.error('AgentCore lease check failed', error.message); return retryable('AgentCore lease state is unavailable'); }
+  if (agentCoreJobs > 0) return { status: 'agentcore-active', jobs: agentCoreJobs };
   const ids = await trackedIds(ssmClient);
   const states = [];
   let allIdle = true;
@@ -110,6 +208,11 @@ async function nightlyShutdown({ ec2Client = ec2, ssmClient = ssm, stateFn = mic
       console.error('Nightly MicroVM termination failed', id, error.message);
     }
   }
+  const agentCoreJobs = await activeAgentCoreLeaseCount({ ssmClient });
+  if (agentCoreJobs > 0) {
+    console.log(`Nightly shutdown left NAT running for ${agentCoreJobs} AgentCore job lease(s)`);
+    return { status: 'nightly-shutdown-deferred', microvms: results, agentCoreJobs, nat: await instanceState(ec2Client) };
+  }
   const current = await instanceState(ec2Client);
   if (current === 'running' || current === 'pending') await ec2Client.send(new StopInstancesCommand({ InstanceIds: [process.env.NAT_INSTANCE_ID] }));
   const natStatus = current === 'running' || current === 'pending' ? 'stopping' : current;
@@ -127,10 +230,14 @@ function isTenPmEastern(scheduledAt) {
 exports.handler = async event => {
   console.log('NAT control request', JSON.stringify(event));
   if (event.action === 'ensure-running') return ensureRunning();
+  if (event.action === 'acquire-agentcore-lease') return acquireAgentCoreLease(event.jobId);
+  if (event.action === 'renew-agentcore-lease') return renewAgentCoreLease(event.jobId);
+  if (event.action === 'release-agentcore-lease') return releaseAgentCoreLease(event.jobId);
+  if (event.action === 'wait-agentcore-nat') return waitForAgentCoreNat(event);
   if (event.action === 'nightly-shutdown') {
     if (!isTenPmEastern(event.scheduledAt)) return { status: 'skipped-outside-10pm-eastern' };
     return nightlyShutdown();
   }
   return reconcile();
 };
-exports._test = { routeUsesNat, ensureRunning, reconcile, nightlyShutdown, trackedIds };
+exports._test = { routeUsesNat, ensureRunning, acquireAgentCoreLease, renewAgentCoreLease, releaseAgentCoreLease, waitForAgentCoreNat, activeAgentCoreLeaseCount, reconcile, nightlyShutdown, trackedIds, leaseValue };

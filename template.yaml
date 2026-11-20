@@ -493,6 +493,13 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
       VersioningConfiguration: { Status: Enabled }
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAgentCoreCodexAuthVersions
+            Status: Enabled
+            Prefix: agentcore/codex-auth/
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
 
   ArtifactBucket:
     Type: AWS::S3::Bucket
@@ -565,6 +572,28 @@ Resources:
       Bucket: !GetAtt WorkspaceBucket.Arn
       RoleArn: !GetAtt S3FilesRole.Arn
       AcceptBucketWarning: true
+
+  AgentCoreCodexAuthAccessPoint:
+    Type: AWS::S3Files::AccessPoint
+    Properties:
+      ClientToken: ipad-claude-agentcore-codex-auth
+      FileSystemId: !GetAtt S3FilesFileSystem.FileSystemId
+      PosixUser:
+        Uid: 1000
+        Gid: 1000
+      RootDirectory:
+        Path: /agentcore/codex-auth
+        CreationPermissions:
+          OwnerUid: 1000
+          OwnerGid: 1000
+          Permissions: '0700'
+      Tags:
+        - Key: Type
+          Value: ai-vm
+        - Key: Name
+          Value: ipad-claude-agentcore-codex-auth
+        - Key: Created
+          Value: '2026-11-19'
 
   S3FilesMountTarget1:
     Type: AWS::S3Files::MountTarget
@@ -976,6 +1005,7 @@ Resources:
           NAT_INSTANCE_ID: !Ref NatInstance
           PRIVATE_ROUTE_TABLE_ID: !Ref PrivateRouteTable
           STARTED_AT_PARAMETER: /ipad-claude/nat/started-at
+          AGENTCORE_JOB_LEASES_PATH: /ipad-claude/agentcore/jobs/
       Policies:
         - Statement:
             - Sid: NatInstanceLifecycle
@@ -984,12 +1014,12 @@ Resources:
               Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${NatInstance}"
             - Sid: NatInstanceState
               Effect: Allow
-              Action: [ec2:DescribeInstances, ec2:DescribeRouteTables]
+              Action: [ec2:DescribeInstances, ec2:DescribeInstanceStatus, ec2:DescribeRouteTables]
               Resource: "*"
               Condition: { StringEquals: { aws:RequestedRegion: !Ref AWS::Region } }
             - Sid: NatStartMarker
               Effect: Allow
-              Action: [ssm:GetParameter, ssm:PutParameter, ssm:GetParametersByPath]
+              Action: [ssm:DeleteParameter, ssm:GetParameter, ssm:PutParameter, ssm:GetParametersByPath]
               Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ipad-claude/*"
             - Sid: MicroVmState
               Effect: Allow
@@ -1189,6 +1219,24 @@ Outputs:
     Value: !GetAtt VpcEgressConnector.Arn
   S3FilesFileSystemId:
     Value: !GetAtt S3FilesFileSystem.FileSystemId
+  AgentCoreCodexAuthAccessPointArn:
+    Description: S3 Files access point limited to AgentCore Codex authentication state.
+    Value: !GetAtt AgentCoreCodexAuthAccessPoint.AccessPointArn
+  AgentCorePrivateSubnet1:
+    Description: Private subnet for the AgentCore runtime.
+    Value: !Ref PrivateSubnet1
+  AgentCorePrivateSubnet2:
+    Description: Second private subnet for the AgentCore runtime.
+    Value: !Ref PrivateSubnet2
+  AgentCoreVpcId:
+    Description: VPC shared by the AgentCore runtime, S3 Files, and NAT instance.
+    Value: !Ref Vpc
+  AgentCoreNatControlFunctionArn:
+    Description: NAT lifecycle controller used by AgentCore job dispatch and cleanup.
+    Value: !GetAtt NatControlFunction.Arn
+  AgentCoreNfsSecurityGroupId:
+    Description: Security group permitting access to S3 Files mount targets.
+    Value: !Ref NfsSecurityGroup
   WebSearchGatewayRoleArn:
     Description: IAM role used by the AgentCore web-search gateway (outbound connector auth).
     Value: !GetAtt WebSearchGatewayRole.Arn
