@@ -26,6 +26,12 @@ When token vending creates or resumes a MicroVM, it requests NAT instance
 startup without waiting for the instance to become ready. Internet egress can
 be unavailable briefly while EC2 starts and forwarding becomes available.
 
+The AgentCore issue workflow starts the same NAT instance through the NAT
+controller. It writes a lease at `/ipad-claude/agentcore/jobs/<job-id>`, then
+waits for the instance and system status checks to pass before invoking
+AgentCore. A job has a one-hour execution cap. Its lease includes the bounded
+startup window and cleanup grace, and cannot be renewed past its hard deadline.
+
 EventBridge invokes the NAT controller once per minute. It checks the live
 private route and tracked MicroVM states, keeps NAT running while any VM is
 starting, running, unknown, or temporarily unavailable, and stops the instance
@@ -39,8 +45,12 @@ internet access for package downloads, Git, Bedrock, AgentCore, or the S3 Files
 mount.
 
 The stack also enforces a one-hour maximum MicroVM lifetime. A daily EventBridge
-rule triggers the shutdown at 10 p.m. America/New_York, terminating all tracked
-MicroVMs and requesting that the NAT instance stop even if a session is active.
+rule triggers shutdown at 10 p.m. America/New_York and terminates tracked
+MicroVMs. It stops NAT only when no active AgentCore lease remains; an AgentCore
+job may therefore finish overnight. The one-minute reconciler also protects
+the instance from idle stops while a lease is valid. On normal completion, the
+workflow deletes the lease and the reconciler stops NAT once all MicroVMs are
+idle. If workflow cleanup fails, the lease expires automatically.
 
 ## Verify egress
 
@@ -78,7 +88,15 @@ aws ec2 wait instance-status-ok --instance-ids "$INSTANCE_ID"
 
 Stopping the NAT instance removes internet egress from both private subnets.
 The automated controller normally handles idle stops; if manual stopping is
-needed, first confirm every MicroVM is suspended or terminated:
+needed, first confirm every MicroVM is suspended or terminated and there are
+no unexpired values under the AgentCore job lease path:
+
+```bash
+aws ssm get-parameters-by-path --path /ipad-claude/agentcore/jobs/ \
+  --recursive --query 'Parameters[].{Name:Name,Lease:Value}' --output table
+```
+
+Then stop the instance:
 
 ```bash
 aws ec2 stop-instances --instance-ids "$INSTANCE_ID"
